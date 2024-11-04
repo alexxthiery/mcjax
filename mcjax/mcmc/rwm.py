@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from mcjax.dist.dist import Dist
+from mcjax.proba.dist import Dist
 
 
 class RWM:
