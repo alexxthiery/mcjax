@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# macosx .DS_Store in all folders and subfolders
+**/.DS_Store
+.DS_Store
+
+# pycache stuff in all folders and subfolders
+**/__pycache__/
+
 # C extensions
 *.so
 
