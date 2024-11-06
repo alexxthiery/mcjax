@@ -33,6 +33,7 @@ class RWM:
 
     def sample(
             self,
+            *,
             key,        # random key
             n_samples,  # number of samples
             x_init,     # initial state
