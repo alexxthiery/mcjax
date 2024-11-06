@@ -42,15 +42,6 @@ class IsotropicGauss(DiffDist):
                    x_batch,   # (B, D): B batch size, D dimension
                    ):
         return -(x_batch - self.mu[None, :]) / self.sigma**2
-
-    def logpdf_and_grad(self, x):
-        return self.logpdf(x), self.grad(x)
-    
-    def logpdf_and_grad_batch(
-                        self,
-                        x_batch,   # (B, D): B batch size, D dimension
-                        ):
-        return self.logpdf_batch(x_batch), self.grad_batch(x_batch)
     
     def sample(self, key, n_samples):
         return jax.random.normal(key, (n_samples, self.dim)) * self.sigma + self.mu[None, :]
@@ -89,28 +80,20 @@ class DiagGauss(DiffDist):
                     self,
                     x_batch,   # (B, D): B batch size, D dimension
                     ):
-        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma[None, :]), axis=-1)
+        z_batch = (x_batch - self.mu[None, :]) / self.sigma[None, :]
+        return -0.5 * jnp.sum(jnp.square(z_batch), axis=-1)
     
-    def logpdf_grad(self, x):
+    def grad(self, x):
         return -(x - self.mu) / self.sigma**2
     
-    def logpdf_grad_batch(
+    def grad_batch(
                     self,
                     x_batch,   # (B, D): B batch size, D dimension
                     ):
         return -(x_batch - self.mu[None, :]) / self.sigma[None, :]**2
     
-    def logpdf_and_grad(self, x):
-        return self.logpdf(x), self.logpdf_grad(x)
-    
-    def logpdf_and_grad_batch(
-                            self,
-                            x_batch,   # (B, D): B batch size, D dimension
-                            ):
-        return self.logpdf_batch(x_batch), self.logpdf_grad_batch(x_batch)
-    
     def sample(self, key, n_samples):
-        return jax.random.normal(key, (n_samples, self.dim)) * self.sigma[None, :] + self.mu[None, :]
+        return jax.random.normal(key, (n_samples, self.dim)) * self.sigma[None,:] + self.mu[None, :]
     
     def log_Z(self):
         """ log partition function """
@@ -155,24 +138,15 @@ class Gauss(DiffDist):
         x_centred = x_batch - self.mu[None, :]
         return -0.5*jnp.sum(x_centred * (x_centred @ self.inv_cov.T), axis=-1)
     
-    def logpdf_grad(self, x):
+    def grad(self, x):
         return -self.inv_cov @ (x - self.mu)
     
-    def logpdf_vgrad_batch(
+    def grad_batch(
                 self,
                 x_batch,   # (B, D): B batch size, D dimension
                 ):
         x_centred = x_batch - self.mu[None, :]
         return -x_centred @ self.inv_cov.T
-    
-    def logpdf_and_grad(self, x):
-        return self.logpdf(x), self.logpdf_grad(x)
-    
-    def logpdf_and_grad_batch(
-                            self,
-                            x_batch,   # (B, D): B batch size, D dimension
-                            ):
-        return self.logpdf_batch(x_batch), self.logpdf_grad_batch(x_batch)
     
     def sample(self, key, n_samples):
         return jax.random.normal(key, (n_samples, self.dim)) @ self.L.T + self.mu[None, :]
