@@ -1,4 +1,4 @@
-from mcjax.proba.dist import DiffDist
+from mcjax.proba.density import LogDensity
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -6,7 +6,7 @@ import jax.random as jr
 # ==================================
 # Banana 2D Distribution
 # ==================================
-class Banana2D(DiffDist):
+class Banana2D(LogDensity):
     """ Banana 2D Distribution:
      target(x,y) \propto exp{ -0.5*( (y-x^2)^2/noise_std^2 + (x-1)^2 ) }
     remark: with noise_std = 0.1, the -logpdf is the Rosenbrock function
@@ -17,14 +17,12 @@ class Banana2D(DiffDist):
                 noise_std=0.1,    # noise standard deviation
                 ):
         self.noise_std = noise_std
+        self._dim = 2
 
-        # define the logpdf
-        def logpdf(x):
-            x0, x1 = x[0], x[1]
-            return -0.5*((x0 - 1.)**2 + (x1 - x0**2)**2 / self.noise_std**2)
-
-        # call the parent class
-        super().__init__(logpdf=logpdf, dim=2)
+    # define the logpdf
+    def logdensity(self, x):
+        x0, x1 = x[0], x[1]
+        return -0.5*((x0 - 1.)**2 + (x1 - x0**2)**2 / self.noise_std**2)
 
     def sample(self, key, n_samples):
         # samples x0_s

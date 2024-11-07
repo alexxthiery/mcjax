@@ -1,4 +1,4 @@
-from mcjax.proba.dist import DiffDist 
+from mcjax.proba.density import LogDensity
 import jax
 import jax.numpy as jnp
 
@@ -7,7 +7,7 @@ import jax.numpy as jnp
 # Isotropic Gaussian Distribution
 # The covariance matrix is a scalar multiple of the identity matrix
 # ==================================
-class IsotropicGauss(DiffDist):
+class IsotropicGauss(LogDensity):
     """ Isotropic Gaussian Distribution:
     The covariance matrix is a scalar multiple of the identity matrix
      mu: mean vector
@@ -26,13 +26,13 @@ class IsotropicGauss(DiffDist):
         self.sigma = jnp.exp(0.5*self.log_var)
         self._dim = len(mu)
 
-    def logpdf(self, x):
+    def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma))
     
-    def logpdf_batch(
-                    self,
-                    x_batch,   # (B, D): B batch size, D dimension
-                    ):
+    def batch(
+            self,
+            x_batch,   # (B, D): B batch size, D dimension
+            ):
         return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1)
     
     def grad(self, x):
@@ -55,7 +55,7 @@ class IsotropicGauss(DiffDist):
 # Diagonal Gaussian Distribution
 # The covariance matrix is a diagonal matrix
 # ==================================
-class DiagGauss(DiffDist):
+class DiagGauss(LogDensity):
     """ Gaussian Distribution with Diagonal Covariance Matrix:
     The covariance matrix is a scalar multiple of the identity matrix
      mu: mean vector
@@ -73,13 +73,13 @@ class DiagGauss(DiffDist):
         self.sigma = jnp.exp(0.5*self.log_var)  # vector of marginal standard deviation
         self._dim = len(mu)
 
-    def logpdf(self, x):
+    def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu) / self.sigma))
     
-    def logpdf_batch(
-                    self,
-                    x_batch,   # (B, D): B batch size, D dimension
-                    ):
+    def batch(
+            self,
+            x_batch,   # (B, D): B batch size, D dimension
+            ):
         z_batch = (x_batch - self.mu[None, :]) / self.sigma[None, :]
         return -0.5 * jnp.sum(jnp.square(z_batch), axis=-1)
     
@@ -104,7 +104,7 @@ class DiagGauss(DiffDist):
 # General Gaussian Distribution
 # The covariance matrix is a general matrix
 # ==================================
-class Gauss(DiffDist):
+class Gauss(LogDensity):
     """ Gaussian Distribution with general Covariance Matrix:
     The covariance matrix is a scalar multiple of the identity matrix
      mu: mean vector
@@ -129,12 +129,13 @@ class Gauss(DiffDist):
         # inverse of covariance matrix
         self.inv_cov = jnp.linalg.inv(cov)
 
-    def logpdf(self, x):
+    def logdensity(self, x):
         return -0.5 * jnp.dot((x - self.mu), self.inv_cov @ (x - self.mu))
 
-    def logpdf_batch(self,
-                     x_batch,   # (B, D): B batch size, D dimension
-                     ):
+    def batch(
+            self,
+            x_batch,   # (B, D): B batch size, D dimension
+            ):
         x_centred = x_batch - self.mu[None, :]
         return -0.5*jnp.sum(x_centred * (x_centred @ self.inv_cov.T), axis=-1)
     
