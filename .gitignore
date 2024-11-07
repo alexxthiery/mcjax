@@ -10,6 +10,9 @@ __pycache__/
 # pycache stuff in all folders and subfolders
 **/__pycache__/
 
+# do not track ./notebooks/playground folder
+notebooks/playground/
+
 # C extensions
 *.so
 
