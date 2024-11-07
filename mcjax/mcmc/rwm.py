@@ -24,6 +24,23 @@ class RwmStats(TypedDict):
 
 
 class Rwm(MarkovKernel):
+    """ Random Walk Metropolis-Hastings kernel
+    with Gaussian proposal distribution
+    
+    Usage:
+    -------
+    logtarget = LogDensity(...)
+    rwm = Rwm(logtarget=logtarget, step_size=0.1)
+    
+    # initialize the state
+    state_init = rwm.init_state(x_init)    
+    
+    # run MCMC
+    mcmc_output = rwm.run_mcmc(
+                        state_init=state_init,
+                        n_iter=1000,
+                        key=key)
+    """
     def __init__(
                 self,
                 *,
