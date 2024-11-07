@@ -1,4 +1,4 @@
-from mcjax.proba.density import LogDensity
+from .density import LogDensity
 import jax.numpy as jnp
 import jax.random as jr
 
