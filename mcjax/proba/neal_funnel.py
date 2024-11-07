@@ -1,4 +1,4 @@
-from mcjax.proba.dist import DiffDist
+from mcjax.proba.density import LogDensity
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -8,7 +8,7 @@ import jax.random as jr
 # x ~ N(0, sigma_x^2), y ~ N(0, variance=exp(x))
 # with sigma_x = 3
 # ==================================
-class NealFunnel(DiffDist):
+class NealFunnel(LogDensity):
     """ Neal's Funnel Distribution
     x ~ N(0, sigma_x^2), y ~ N(0, exp(x/2))
     with sigma_x = 3
@@ -19,15 +19,13 @@ class NealFunnel(DiffDist):
                 sigma_x=3.,    # noise standard deviation
                 ):
         self.sigma_x = sigma_x
-        
-        # define the logpdf
-        def logpdf(x):
-            x0, x1 = x[0], x[1]
-            std = jnp.exp(x0/2.)
-            return -0.5*(x0/self.sigma_x)**2 - 0.5*(x1/std)**2 - 0.5*jnp.log(std**2)
+        self._dim = 2
 
-        # call the parent class
-        super().__init__(logpdf=logpdf, dim=2)
+    # define the logpdf
+    def logdensity(self, x):
+        x0, x1 = x[0], x[1]
+        std = jnp.exp(x0/2.)
+        return -0.5*(x0/self.sigma_x)**2 - 0.5*(x1/std)**2 - 0.5*jnp.log(std**2)
 
     def sample(self, key, n_samples):
         # samples x0_s

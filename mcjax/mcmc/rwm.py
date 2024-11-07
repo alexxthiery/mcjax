@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from mcjax.proba.dist import Dist
+from mcjax.proba.density import LogDensity
 
 
 class RWM:
@@ -12,13 +12,13 @@ class RWM:
     def __init__(
                 self,
                 *,
-                target: Dist,   # target distribution
-                step_size,      # step size
-                cov=None,       # covariance matrix
+                logtarget: LogDensity,       # logtarget distribution
+                step_size: float,   # step size
+                cov=None,           # covariance matrix
                 ):
-        self.target = target
+        self.logtarget = logtarget
         self.step_size = step_size
-        self.dim = target.dim
+        self.dim = logtarget.dim
         # covariance matrix of the proposal distribution
         if cov is None:
             self.cov = jnp.eye(self.dim)
@@ -34,31 +34,32 @@ class RWM:
     def sample(
             self,
             *,
-            key,        # random key
-            n_samples,  # number of samples
-            x_init,     # initial state
+            key: jax.Array,             # random key
+            n_samples: int,             # number of samples
+            x_init: jnp.ndarray,        # initial point
             ):
-        """ sample from the target distribution using RWM """
+        """ sample from the logtarget distribution using RWM """
 
         # implement a single step of RWM
         def rwm_step(carry, _):
             key, x = carry
             key, key_ = jr.split(key)
             x_prop = x + jr.normal(key_, (self.dim,)) * self.step_size
-            log_target_current = self.target.logpdf(x)
-            log_target_proposal = self.target.logpdf(x_prop)
-            log_ratio = log_target_proposal - log_target_current
+            logtarget_current = self.logtarget(x)
+            logtarget_proposal = self.logtarget(x_prop)
+            log_ratio = logtarget_proposal - logtarget_current
             # accept or reject
             key, key_ = jr.split(key)
             u = jr.uniform(key_)
             accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
             # square jump distance statistics
             sq_jump = accept_MH * jnp.linalg.norm(x_prop - x)**2
+            # metropolis-hastings acceptance
             is_accept = u < accept_MH
             x = jnp.where(is_accept, x_prop, x)
-            log_target = jnp.where(is_accept, log_target_proposal, log_target_current)
+            logtarget = jnp.where(is_accept, logtarget_proposal, logtarget_current)
             output_dict = {'x': x,
-                           'log_target': log_target,
+                           'logtarget': logtarget,
                            'is_accept': is_accept,
                            'accept_MH': accept_MH,
                            'sq_jump': sq_jump,
