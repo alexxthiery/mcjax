@@ -17,6 +17,10 @@ class LogGaussPines(LogDensity):
     Discretized Gaussian Cox process on the Pines dataset on a grid
     of dimension grid_dim x grid_dim. The distribution is consequently
     defined on a R^{grid_dim**2}.
+    
+    Reference:
+    ---------
+    - "Log Gaussian Cox processes", 1998, J Møller, AR Syversveen, RP Waagepetersen
     """
     def __init__(
                 self,
