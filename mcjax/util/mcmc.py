@@ -1,5 +1,5 @@
 import numpy as np
-from mcjax.util.autocorrelation import autocorr
+from .autocorrelation import autocorr
 
 
 def normalize(samples):
