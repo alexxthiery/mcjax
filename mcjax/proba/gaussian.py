@@ -25,15 +25,17 @@ class IsotropicGauss(LogDensity):
         self.log_var = log_var
         self.sigma = jnp.exp(0.5*self.log_var)
         self._dim = len(mu)
+        logdet = self.dim*self.log_var
+        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
 
     def logdensity(self, x):
-        return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma))
+        return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma)) - self._log_Z
     
     def batch(
             self,
             x_batch,   # (B, D): B batch size, D dimension
             ):
-        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1)
+        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1) - self._log_Z
     
     def grad(self, x):
         return -(x - self.mu) / self.sigma**2
@@ -72,16 +74,18 @@ class DiagGauss(LogDensity):
         self.log_var = log_var
         self.sigma = jnp.exp(0.5*self.log_var)  # vector of marginal standard deviation
         self._dim = len(mu)
+        logdet = jnp.sum(self.log_var)
+        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
 
     def logdensity(self, x):
-        return -0.5 * jnp.sum(jnp.square((x - self.mu) / self.sigma))
+        return -0.5 * jnp.sum(jnp.square((x - self.mu) / self.sigma)) - self._log_Z
     
     def batch(
             self,
             x_batch,   # (B, D): B batch size, D dimension
             ):
         z_batch = (x_batch - self.mu[None, :]) / self.sigma[None, :]
-        return -0.5 * jnp.sum(jnp.square(z_batch), axis=-1)
+        return -0.5 * jnp.sum(jnp.square(z_batch), axis=-1) - self._log_Z
     
     def grad(self, x):
         return -(x - self.mu) / self.sigma**2
@@ -126,18 +130,23 @@ class Gauss(LogDensity):
         
         # compute cholesky decomposition of the covariance matrix
         self.L = jnp.linalg.cholesky(cov)
+        # get logdet from the cholesky decomposition
+        logdet = 2*jnp.sum(jnp.log(jnp.diag(self.L)))
+        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+
         # inverse of covariance matrix
         self.inv_cov = jnp.linalg.inv(cov)
 
     def logdensity(self, x):
-        return -0.5 * jnp.dot((x - self.mu), self.inv_cov @ (x - self.mu))
+        log_unormalized = -0.5 * jnp.dot((x-self.mu), self.inv_cov @ (x-self.mu))
+        return log_unormalized - self._log_Z
 
     def batch(
             self,
             x_batch,   # (B, D): B batch size, D dimension
             ):
         x_centred = x_batch - self.mu[None, :]
-        return -0.5*jnp.sum(x_centred * (x_centred @ self.inv_cov.T), axis=-1)
+        return -0.5*jnp.sum(x_centred * (x_centred @ self.inv_cov.T), axis=-1) - self._log_Z
     
     def grad(self, x):
         return -self.inv_cov @ (x - self.mu)
@@ -151,8 +160,4 @@ class Gauss(LogDensity):
     
     def sample(self, key, n_samples):
         return jax.random.normal(key, (n_samples, self.dim)) @ self.L.T + self.mu[None, :]
-    
-    def log_Z(self):
-        """ log partition function """
-        return -0.5 * self.dim * jnp.log(2 * jnp.pi) - 0.5*jnp.linalg.slogdet(self.cov)[1]
 
