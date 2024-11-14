@@ -26,7 +26,7 @@ class GAIS:
         self.logtarget = logtarget
         self.dim = logtarget.dim
         
-    def log_mean_exp(
+    def log_mean_exp_batch(
                 self,
                 x_arr: jnp.ndarray,  # (N, D): N number of samples, D dimension
             ):
@@ -36,7 +36,19 @@ class GAIS:
         # subtract the max for stability
         x_arr_normalized = x_arr - x_max[:, None]
         # compute the log sum exp
-        return x_max + jnp.log(jnp.sum(jnp.exp(x_arr_normalized), axis=1))
+        return x_max + jnp.log(jnp.mean(jnp.exp(x_arr_normalized), axis=1))
+    
+    def log_sum_exp(
+                self,
+                x: jnp.ndarray,
+            ):
+        """ log sum exp implemented in a stable way """
+        # max of each row
+        x_max = jnp.max(x)
+        # subtract the max for stability
+        x_normalized = x - x_max
+        # compute the log sum exp
+        return x_max + jnp.log(jnp.sum(jnp.exp(x_normalized)))
     
     def run(self,
             *,
@@ -47,7 +59,6 @@ class GAIS:
             cov_init: jnp.ndarray,          # initial covariance
             family: str = 'gaussian',       # proposal family
             deg: int = 3,                   # degrees of freedom for Student-t proposal
-            use_all_samples: bool = False,  # use all samples
             verbose: bool = False,          # verbose
             ):
         # check that family is in ['gaussian', 'student']
@@ -78,7 +89,7 @@ class GAIS:
         
         # save the list of proposal densities
         prop_list = []
-        
+
         # effective sample size
         ess_list = []
             
@@ -117,7 +128,7 @@ class GAIS:
             # TODO: there are many duplicated computations here: proposals are re-computed and do not need to be
             # compute all the "deterministic mixtures weights"
             log_prop_indiv = [jnp.concatenate([prop.batch(x_)[:, None] for prop in prop_list], axis=1) for x_ in samples]
-            log_prop = [self.log_mean_exp(log_w) for log_w in log_prop_indiv]
+            log_prop = [self.log_mean_exp_batch(log_w) for log_w in log_prop_indiv]
             # log_weights = [self.logtarget.batch(x) - log_q for (x, log_q) in zip(samples, log_prop)]
             log_weights = [log_t - log_q for (log_t, log_q) in zip(log_target_values, log_prop)]
             
