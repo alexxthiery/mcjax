@@ -1,22 +1,29 @@
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+from typing import TypedDict, Tuple, Dict
 from mcjax.proba.density import LogDensity
 from mcjax.proba.student import Student
 from mcjax.proba.gaussian import Gauss
 from mcjax.util.ess import ess_log_weight
-from mcjax.util.log_sums import log_mean_exp_batch
 
 
 # ==========================================
-# Generalized Adaptive Importance Sampling
-#
+# Doubly Adaptive Importance Sampling
 # Reference:
-# 1: Adaptive multiple importance sampling.
-# Cornuet, J.M., Marin, J.M., Mira, A. and Robert, C.P., 2012. 
-# Scandinavian Journal of Statistics, 39(4), pp.798-812.
+# "Doubly Adaptive Importance Sampling"  
+# van den Boom, W. Thiery, A.H., and Cremaschi, A (2023)  
+# arxiv: https://arxiv.org/abs/2404.18556
 # ==========================================
-class GAIS:
-    """ Generalized Adaptive Importance Sampling """
+class DAIS:
+    """ Doubly Adaptive Importance Sampling
+    
+    Reference:
+    ----------
+    "Doubly Adaptive Importance Sampling"  
+    van den Boom, W. Thiery, A.H., and Cremaschi, A (2023)  
+    arxiv: https://arxiv.org/abs/2404.18556
+    """
     def __init__(
                 self,
                 *,
@@ -36,21 +43,6 @@ class GAIS:
             deg: int = 3,                   # degrees of freedom for Student-t proposal
             verbose: bool = False,          # verbose
             ):
-        """
-        Run the Generalized Adaptive Importance Sampling algorithm
-        
-        output:
-        ------
-        dictionary = {
-            'samples':  # the final samples
-            'weights':  # the final weights
-            'mu':       # the final location
-            'cov':      # the final covariance matrix
-            'mu_traj':  # the trajectory of the location
-            'cov_traj': # the trajectory of the covariance matrix
-            'ess':      # the trajectory of the effective sample size
-            }
-        """
         # check that family is in ['gaussian', 'student']
         error_msg = "Family must be in ['gaussian', 'student']"
         assert family in ['gaussian', 'student'], error_msg
@@ -82,10 +74,6 @@ class GAIS:
 
         # effective sample size
         ess_list = []
-        
-        # to store the individual proposal densities:
-        # log_prop_indiv contains log pi_i(x_j) for all i and j
-        log_prop_indiv = []
             
         for it in range(n_iter):
             if verbose:
@@ -119,15 +107,14 @@ class GAIS:
             # update the log_target values
             log_target_values.append(self.logtarget.batch(x))            
             
+            # TODO: there are many duplicated computations here: proposals are re-computed and do not need to be
             # compute all the "deterministic mixtures weights"
-            # OLD:: log_prop_indiv = [jnp.concatenate([prop.batch(x_)[:, None] for prop in prop_list], axis=1) for x_ in samples]
-            log_prop_indiv = [jnp.concatenate([log_p_arr, dist.batch(x_)[:, None]], axis=1) for (log_p_arr, x_) in zip(log_prop_indiv, samples[:-1])]
-            log_prop_indiv.append(jnp.concatenate([prop.batch(x)[:, None] for prop in prop_list], axis=1))
-            
-            log_prop = [log_mean_exp_batch(log_w) for log_w in log_prop_indiv]
+            log_prop_indiv = [jnp.concatenate([prop.batch(x_)[:, None] for prop in prop_list], axis=1) for x_ in samples]
+            log_prop = [self.log_mean_exp_batch(log_w) for log_w in log_prop_indiv]
             # log_weights = [self.logtarget.batch(x) - log_q for (x, log_q) in zip(samples, log_prop)]
             log_weights = [log_t - log_q for (log_t, log_q) in zip(log_target_values, log_prop)]
             
+
             # flatten everything
             log_weights_all = jnp.concatenate(log_weights)
             log_weights_all = log_weights_all - jnp.max(log_weights_all)
@@ -143,22 +130,43 @@ class GAIS:
             
             # update the proposal distribution
             mu_approx = jnp.sum(weights_all[:, None] * samples_all, axis=0)
-            cov_approx = jnp.cov(samples_all,
-                                 rowvar=False,
-                                 aweights=weights_all)    
+            cov_approx = jnp.cov(samples_all, rowvar=False, aweights=weights_all)    
             
             # TODO: add effective sample size check
             # TODO: check that the covariance matrix is positive definite
                     
         dict_output = {
-            'samples': samples_all,     # the final samples
-            'weights': weights_all,     # the final weights
-            'mu': mu_params[-1],        # the final location
-            'cov': cov_params[-1],      # the final covariance matrix
-            'mu_traj': mu_params,       # the trajectory of the location
-            'cov_traj': cov_params,     # the trajectory of the covariance matrix
-            'ess': ess_list,            # the trajectory of the effective sample size
+            'samples': samples_all,
+            'weights': weights_all,
+            'mu': mu_params[-1],
+            'cov': cov_params[-1],
+            'mu_traj': mu_params,
+            'cov_traj': cov_params,
+            'ess': ess_list,
         }
-        
         return dict_output
+    
+    def log_mean_exp_batch(
+                self,
+                x_arr: jnp.ndarray,  # (N, D): N number of samples, D dimension
+            ):
+        """ log-mean-exp implemented in a stable way """
+        # max of each row
+        x_max = jnp.max(x_arr, axis=1)
+        # subtract the max for stability
+        x_arr_normalized = x_arr - x_max[:, None]
+        # compute the log sum exp
+        return x_max + jnp.log(jnp.mean(jnp.exp(x_arr_normalized), axis=1))
+    
+    def log_sum_exp(
+                self,
+                x: jnp.ndarray,
+            ):
+        """ log sum exp implemented in a stable way """
+        # max of each row
+        x_max = jnp.max(x)
+        # subtract the max for stability
+        x_normalized = x - x_max
+        # compute the log sum exp
+        return x_max + jnp.log(jnp.sum(jnp.exp(x_normalized)))
     
