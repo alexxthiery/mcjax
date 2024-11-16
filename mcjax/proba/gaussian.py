@@ -1,6 +1,7 @@
 from .density import LogDensity
 import jax
 import jax.numpy as jnp
+import mcjax.util.psd as psd
 
 
 # ==================================
@@ -76,7 +77,7 @@ class DiagGauss(LogDensity):
         self._dim = len(mu)
         logdet = jnp.sum(self.log_var)
         self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
-
+        
     def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu) / self.sigma)) - self._log_Z
     
@@ -116,29 +117,61 @@ class Gauss(LogDensity):
     """
     def __init__(
                 self,
-                mu,         # mean vector
-                cov         # covariance matrix
+                mu: jnp.ndarray,                # mean vector
+                cov: jnp.ndarray,               # covariance matrix
+                cov_inv: jnp.ndarray = None,    # inverse of covariance matrix
+                chol: jnp.ndarray = None,       # cholesky decomposition of covariance matrix
                 ):
         # make sure that cov is a square matrix
         assert jnp.ndim(cov) == 2
         assert cov.shape[0] == cov.shape[1]
         assert cov.shape[0] == len(mu)
         
-        self.mu = mu
-        self.cov = cov
+        # set the dimension
         self._dim = len(mu)
         
+        self.update_mu(mu)
+        self.update_cov(cov=cov, cov_inv=cov_inv, chol=chol)
+
+    def update_mu(self, mu):        
+        self.mu = mu
+
+    def update_cov(
+                self,
+                *,
+                cov: jnp.ndarray,               # covariance matrix
+                cov_inv: jnp.ndarray = None,    # inverse of covariance matrix
+                chol: jnp.ndarray = None,       # cholesky decomposition of covariance matrix
+                ):
         # compute cholesky decomposition of the covariance matrix
-        self.L = jnp.linalg.cholesky(cov)
-        # get logdet from the cholesky decomposition
-        logdet = 2*jnp.sum(jnp.log(jnp.diag(self.L)))
-        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+        self.chol = jax.lax.cond(
+                        chol is None,
+                        lambda _: jnp.linalg.cholesky(cov),
+                        lambda _: chol if chol is not None else jnp.zeros_like(cov),
+                        operand=None)
 
         # inverse of covariance matrix
-        self.inv_cov = jnp.linalg.inv(cov)
+        self.cov_inv = jax.lax.cond(
+                        cov_inv is None,
+                        lambda _: psd.invert_psd_matrix(A=cov, chol=self.chol),
+                        lambda _: cov_inv if cov_inv is not None else jnp.zeros_like(cov),
+                        operand=None,)
+
+        # update normalization
+        logdet = 2*jnp.sum(jnp.log(jnp.diag(self.chol)))
+        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+
+    def update_params(
+                    self,
+                    mu: jnp.ndarray,                # mean vector
+                    cov: jnp.ndarray,               # covariance matrix
+                    cov_inv: jnp.ndarray = None,    # inverse of covariance matrix
+                    ):
+        self.update_mu(mu)
+        self.update_cov(cov=cov, cov_inv=cov_inv)
 
     def logdensity(self, x):
-        log_unormalized = -0.5 * jnp.dot((x-self.mu), self.inv_cov @ (x-self.mu))
+        log_unormalized = -0.5 * jnp.dot((x-self.mu), self.cov_inv @ (x-self.mu))
         return log_unormalized - self._log_Z
 
     def batch(
@@ -146,18 +179,30 @@ class Gauss(LogDensity):
             x_batch,   # (B, D): B batch size, D dimension
             ):
         x_centred = x_batch - self.mu[None, :]
-        return -0.5*jnp.sum(x_centred * (x_centred @ self.inv_cov.T), axis=-1) - self._log_Z
+        return -0.5*jnp.sum(x_centred * (x_centred @ self.cov_inv.T), axis=-1) - self._log_Z
     
     def grad(self, x):
-        return -self.inv_cov @ (x - self.mu)
+        return -self.cov_inv @ (x - self.mu)
     
     def grad_batch(
                 self,
                 x_batch,   # (B, D): B batch size, D dimension
                 ):
         x_centred = x_batch - self.mu[None, :]
-        return -x_centred @ self.inv_cov.T
+        return -x_centred @ self.cov_inv.T
     
-    def sample(self, key, n_samples):
-        return jax.random.normal(key, (n_samples, self.dim)) @ self.L.T + self.mu[None, :]
+    def sample(
+            self,
+            key: jnp.ndarray,       # random key
+            n_samples: int,         # number of samples
+            center: bool = False,   # whether to center the samples
+            ):
+        zs = jax.random.normal(key, (n_samples, self.dim))
+        zs_mean = jnp.mean(zs, axis=0)
+        zs = jax.lax.cond(
+                    center,
+                    lambda _: zs - zs_mean[None, :],
+                    lambda _: zs,
+                    operand=None)
+        return zs @ self.chol.T + self.mu[None, :]
 

@@ -1,11 +1,14 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import jax.scipy
 from typing import TypedDict, Tuple, Dict
 from mcjax.proba.density import LogDensity
 from mcjax.proba.student import Student
 from mcjax.proba.gaussian import Gauss
-from mcjax.util.ess import ess_log_weight
+from mcjax.util.weights import ess_log_weight, target_ess_normalized
+from mcjax.util.weights import compute_weights
+import mcjax.util.psd as psd
 
 
 # ==========================================
@@ -31,7 +34,7 @@ class DAIS:
                 ):
         self.logtarget = logtarget
         self.dim = logtarget.dim
-    
+
     def run(self,
             *,
             key: jnp.ndarray,               # random key
@@ -39,134 +42,160 @@ class DAIS:
             n_iter: int,                    # number of iterations
             mu_init: jnp.ndarray,           # initial location
             cov_init: jnp.ndarray,          # initial covariance
-            family: str = 'gaussian',       # proposal family
-            deg: int = 3,                   # degrees of freedom for Student-t proposal
+            ess_threshold: float = 0.5,     # effective sample size threshold
+            alpha_damp: float = 1.,         # damping factor for the mean/covariance updates
             verbose: bool = False,          # verbose
             ):
-        # check that family is in ['gaussian', 'student']
-        error_msg = "Family must be in ['gaussian', 'student']"
-        assert family in ['gaussian', 'student'], error_msg
-        
+        """
+        Reference:
+        ----------
+        "Doubly Adaptive Importance Sampling"  
+        van den Boom, W. Thiery, A.H., and Cremaschi, A (2023)  
+        arxiv: https://arxiv.org/abs/2404.18556
+
+        output:
+        =======
+
+        dict = {
+            "mu": mu,                       # mu parameter
+            "cov": cov,                     # covariance parameter
+            "elbo": elbo_list[-1],          # elbo value
+            "mu_traj": mu_params,           # mu param trajectory
+            "cov_traj": cov_params,         # cov param
+            "elbo_traj": elbo_list,         # elbo trajectory
+            "eps_traj": eps_params,         # eps trajectory
+            "mean_hat_traj": mean_hat_list,   # estimation of mean (**different from param mu**)
+            "cov_hat_traj": cov_hat_list,   # estimation of covariance (**different from param cov**)
+        }
+        """
         # check dimension of mu_init and cov_init
-        error_msg = "Invalid dimension of mu_init"
+        error_msg = "cov_invalid dimension of mu_init"
         assert len(mu_init) == self.dim, error_msg
-        error_msg = "Invalid dimension of cov_init"
+        error_msg = "cov_invalid dimension of cov_init"
         assert cov_init.shape == (self.dim, self.dim), error_msg
-        
-        # degree of freedom for the Student-t proposal if family is 'student'
-        self.deg = deg
-        
-        mu_approx = mu_init
-        cov_approx = cov_init
-        
-        # to store all the samples
-        samples = []
-        
-        # to store the log_target values
-        log_target_values = []
-        
-        # to store all the parameters
+                
+        # initialize
+        cov = jnp.copy(cov_init)
+        mu = jnp.copy(mu_init)
+
+        # list to save history
+        elbo_list = []
+        ess_normalized_list = []
         mu_params = []
         cov_params = []
+        eps_params = []
+        mean_hat_list = []
+        cov_hat_list = []
         
-        # save the list of proposal densities
-        prop_list = []
+        # initialize the proposal distribution
+        proposal = Gauss(mu=mu, cov=cov)
 
-        # effective sample size
-        ess_list = []
-            
+
         for it in range(n_iter):
-            if verbose:
-                print(f"Iteration {it+1}/{n_iter}")
-                
-            # save the parameters
-            mu_params.append(mu_approx)
-            cov_params.append(cov_approx)
-            
-            # set the proposal distribution
-            # remark: not optimal since both Gauss and Student
-            # have to be initialized at each iteration, with potential
-            # inversion / factorization of the covariance matrix
-            # but fine for the moment
-            dist_map = {
-                'gaussian': Gauss(mu=mu_approx, cov=cov_approx),
-                'student': Student(mu=mu_approx, cov=cov_approx, deg=self.deg),
-            }
-            dist = dist_map[family]
-
-            # save the proposal distribution
-            prop_list.append(dist)
-            
-            # sample from the proposal distribution
+            # generate samples from current approx
             key, key_ = jr.split(key)
-            x = dist.sample(key=key_, n_samples=n_samples)
-            
-            # save the samples
-            samples.append(x)
-            
-            # update the log_target values
-            log_target_values.append(self.logtarget.batch(x))            
-            
-            # TODO: there are many duplicated computations here: proposals are re-computed and do not need to be
-            # compute all the "deterministic mixtures weights"
-            log_prop_indiv = [jnp.concatenate([prop.batch(x_)[:, None] for prop in prop_list], axis=1) for x_ in samples]
-            log_prop = [self.log_mean_exp_batch(log_w) for log_w in log_prop_indiv]
-            # log_weights = [self.logtarget.batch(x) - log_q for (x, log_q) in zip(samples, log_prop)]
-            log_weights = [log_t - log_q for (log_t, log_q) in zip(log_target_values, log_prop)]
-            
+            xs = proposal.sample(key=key_, n_samples=n_samples, center=True)
+            # xs = generate_proposal(key=key_, n_samples=n_samples)
 
-            # flatten everything
-            log_weights_all = jnp.concatenate(log_weights)
-            log_weights_all = log_weights_all - jnp.max(log_weights_all)
-            samples_all = jnp.concatenate(samples)
+            # compute importance weights
+            log_pi = self.logtarget.batch(xs)
+            log_q = proposal.batch(xs)
+            # log_q = compute_logproposal(xs)
+            # log_pi = compute_logtarget(xs)
+            log_w = log_pi - log_q
             
-            # compute the gaussianized weights
-            weights_all = jnp.exp(log_weights_all)
-            weights_all = weights_all / jnp.sum(weights_all)
+            # compute ess normalized
+            ess_normalized = ess_log_weight(log_w) / n_samples
             
-            # compute the effective sample size and save it
-            ess_val = ess_log_weight(log_weights_all)
-            ess_list.append(ess_val)
+            # compute elbo
+            elbo = jnp.mean(log_w)
+            
+            # estimate mean / variance
+            prop_student = Student(mu=mu, cov=cov, deg=3)
+            key, key_ = jr.split(key)
+            xs_student = prop_student.sample(key=key_, n_samples=n_samples, center=True)
+            log_q_student = prop_student.batch(xs_student)
+            log_pi_student = self.logtarget.batch(xs_student)
+            log_w_student = log_pi_student - log_q_student
+            w_student_normalized = compute_weights(log_w_student)
+            mean_student_hat = jnp.sum(w_student_normalized[:, None] * xs_student, axis=0)
+            xs_student_centred = xs_student - mean_student_hat[None, :]
+            cov_student_hat = xs_student_centred.T @ (w_student_normalized[:, None] * xs_student_centred)
+            
+            # find the next temperature
+            eps = target_ess_normalized(
+                        log_weights=log_w,
+                        ess_normalized_target=ess_threshold)
+
+            # grad_phi = grad_log(target) - grad_log_gaussian
+            grad_phis = self.logtarget.grad_batch(xs) - proposal.grad_batch(xs)
+            cov_grad_phis = grad_phis @ cov.T
+            
+            while True:
+                # compute normalized weights
+                w_tempered = compute_weights(eps*log_w)
+                                
+                # update the mean:
+                # ===========
+                # mu_new = mu + eps * E_{tempered}[cov @ grad_phi]
+                mean_cov_grad_phis = jnp.sum(w_tempered[:, None]*cov_grad_phis, axis=0)
+                mu_new = mu + eps * mean_cov_grad_phis
+                
+                # update the covariance
+                # =================
+                # cov_new = cov + eps * E_{tempered}[Cov(cov@grad_phi, x)]
+                cov_grad_phis_centred = cov_grad_phis - mean_cov_grad_phis[None, :]
+                xs_mean = jnp.sum(w_tempered[:, None] * xs, axis=0)
+                xs_centred = xs - xs_mean[None, :]
+                delta_cov = cov_grad_phis_centred.T @ (w_tempered[:, None] * xs_centred)
+                # make sure that the covariance matrix is symmetric
+                delta_cov = 0.5*(delta_cov+delta_cov.T)
+                cov_new = cov + eps * delta_cov
+                
+                # sanity checks
+                # =============
+                if psd.is_psd(cov + alpha_damp*(cov_new-cov)):
+                    break
+                else:
+                    # if the covariance matrix is not psd, reduce the temperature
+                    if verbose:
+                        print(f"\t Reducing the temperature: eps={eps:.2f}")
+                    eps = 0.5*eps
+            
+            # save the params
+            mu_params.append(mu)
+            cov_params.append(cov)
+            eps_params.append(eps)
+            elbo_list.append(elbo)
+            ess_normalized_list.append(ess_normalized)
+            
+            # save estimated mean and covariance
+            mean_hat_list.append(mean_student_hat)
+            cov_hat_list.append(cov_student_hat)
+            
+            # print information to the user
+            if verbose:
+                print(f"[{it+1}/{n_iter}] \t eps: {eps:.2f} \t ELBO: {elbo:.2f} \t ESS: {ess_normalized:.3f}")
+
+            # update the parameters
+            mu = mu + alpha_damp*(mu_new-mu)
+            cov = cov + alpha_damp*(cov_new-cov)
             
             # update the proposal distribution
-            mu_approx = jnp.sum(weights_all[:, None] * samples_all, axis=0)
-            cov_approx = jnp.cov(samples_all, rowvar=False, aweights=weights_all)    
-            
-            # TODO: add effective sample size check
-            # TODO: check that the covariance matrix is positive definite
-                    
-        dict_output = {
-            'samples': samples_all,
-            'weights': weights_all,
-            'mu': mu_params[-1],
-            'cov': cov_params[-1],
-            'mu_traj': mu_params,
-            'cov_traj': cov_params,
-            'ess': ess_list,
+            proposal.update_mu(mu)
+            proposal.update_cov(cov=cov)
+
+        output_dict = {
+            "mu": mu,
+            "cov": cov,
+            "elbo": elbo_list[-1],
+            "mu_traj": mu_params,
+            "cov_traj": cov_params,
+            "elbo_traj": elbo_list,
+            "eps_traj": eps_params,
+            "ess_normalized_traj": ess_normalized_list,
+            "mean_hat_traj": mean_hat_list,
+            "cov_hat_traj": cov_hat_list,
         }
-        return dict_output
-    
-    def log_mean_exp_batch(
-                self,
-                x_arr: jnp.ndarray,  # (N, D): N number of samples, D dimension
-            ):
-        """ log-mean-exp implemented in a stable way """
-        # max of each row
-        x_max = jnp.max(x_arr, axis=1)
-        # subtract the max for stability
-        x_arr_normalized = x_arr - x_max[:, None]
-        # compute the log sum exp
-        return x_max + jnp.log(jnp.mean(jnp.exp(x_arr_normalized), axis=1))
-    
-    def log_sum_exp(
-                self,
-                x: jnp.ndarray,
-            ):
-        """ log sum exp implemented in a stable way """
-        # max of each row
-        x_max = jnp.max(x)
-        # subtract the max for stability
-        x_normalized = x - x_max
-        # compute the log sum exp
-        return x_max + jnp.log(jnp.sum(jnp.exp(x_normalized)))
-    
+        return output_dict
+
