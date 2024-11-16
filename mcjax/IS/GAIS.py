@@ -3,7 +3,7 @@ import jax.random as jr
 from mcjax.proba.density import LogDensity
 from mcjax.proba.student import Student
 from mcjax.proba.gaussian import Gauss
-from mcjax.util.ess import ess_log_weight
+from mcjax.util.weights import ess_log_weight
 from mcjax.util.log_sums import log_mean_exp_batch
 
 
@@ -61,9 +61,6 @@ class GAIS:
         error_msg = "Invalid dimension of cov_init"
         assert cov_init.shape == (self.dim, self.dim), error_msg
         
-        # degree of freedom for the Student-t proposal if family is 'student'
-        self.deg = deg
-        
         mu_approx = mu_init
         cov_approx = cov_init
         
@@ -102,7 +99,7 @@ class GAIS:
             # but fine for the moment
             dist_map = {
                 'gaussian': Gauss(mu=mu_approx, cov=cov_approx),
-                'student': Student(mu=mu_approx, cov=cov_approx, deg=self.deg),
+                'student': Student(mu=mu_approx, cov=cov_approx, deg=deg),
             }
             dist = dist_map[family]
 
@@ -126,7 +123,7 @@ class GAIS:
             
             log_prop = [log_mean_exp_batch(log_w) for log_w in log_prop_indiv]
             # log_weights = [self.logtarget.batch(x) - log_q for (x, log_q) in zip(samples, log_prop)]
-            log_weights = [log_t - log_q for (log_t, log_q) in zip(log_target_values, log_prop)]
+            log_weights = [log_t-log_q for (log_t, log_q) in zip(log_target_values, log_prop)]
             
             # flatten everything
             log_weights_all = jnp.concatenate(log_weights)
@@ -159,6 +156,5 @@ class GAIS:
             'cov_traj': cov_params,     # the trajectory of the covariance matrix
             'ess': ess_list,            # the trajectory of the effective sample size
         }
-        
         return dict_output
-    
+
