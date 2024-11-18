@@ -63,7 +63,7 @@ class Mala(MarkovKernel):
         key, key_ = jr.split(key)
         # \log(f(x)) \propto -V(x) 
 
-        x_prop = x + self.epsilon*self.logdensity.grad(x) + jr.normal(key_, (self._dim,)) *2*self.epsilon
+        x_prop = x + self.epsilon*self.logdensity.grad(x) + jr.normal(key_, (self._dim,)) *jnp.sqrt(2*self.epsilon)
         logtarget_proposal = self.logdensity(x_prop)
         
         # accept or reject
