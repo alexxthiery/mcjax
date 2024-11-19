@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy
-from typing import TypedDict, Tuple, Dict
 from mcjax.proba.density import LogDensity
 from mcjax.proba.student import Student
 from mcjax.proba.gaussian import Gauss
@@ -90,18 +89,24 @@ class DAIS:
         # initialize the proposal distribution
         proposal = Gauss(mu=mu, cov=cov)
 
-
+        @jax.jit
+        def compute_logtarget(xs):
+            return self.logtarget.batch(xs)
+        
+        @jax.jit
+        def compute_logtarget_grad(xs):
+            return self.logtarget.grad_batch(xs)
+        
         for it in range(n_iter):
             # generate samples from current approx
             key, key_ = jr.split(key)
             xs = proposal.sample(key=key_, n_samples=n_samples, center=True)
-            # xs = generate_proposal(key=key_, n_samples=n_samples)
 
             # compute importance weights
-            log_pi = self.logtarget.batch(xs)
+            # log_pi = self.logtarget.batch(xs)
+            log_pi = compute_logtarget(xs)
             log_q = proposal.batch(xs)
             # log_q = compute_logproposal(xs)
-            # log_pi = compute_logtarget(xs)
             log_w = log_pi - log_q
             
             # compute ess normalized
@@ -115,7 +120,8 @@ class DAIS:
             key, key_ = jr.split(key)
             xs_student = prop_student.sample(key=key_, n_samples=n_samples, center=True)
             log_q_student = prop_student.batch(xs_student)
-            log_pi_student = self.logtarget.batch(xs_student)
+            # log_pi_student = self.logtarget.batch(xs_student)
+            log_pi_student = compute_logtarget(xs_student)
             log_w_student = log_pi_student - log_q_student
             w_student_normalized = compute_weights(log_w_student)
             mean_student_hat = jnp.sum(w_student_normalized[:, None] * xs_student, axis=0)
@@ -128,7 +134,9 @@ class DAIS:
                         ess_normalized_target=ess_threshold)
 
             # grad_phi = grad_log(target) - grad_log_gaussian
-            grad_phis = self.logtarget.grad_batch(xs) - proposal.grad_batch(xs)
+            # logtarget_grad = self.logtarget.grad_batch(xs)
+            logtarget_grad = compute_logtarget_grad(xs)
+            grad_phis = logtarget_grad - proposal.grad_batch(xs)
             cov_grad_phis = grad_phis @ cov.T
             
             while True:
