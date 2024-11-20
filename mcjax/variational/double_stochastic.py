@@ -36,14 +36,15 @@ class DoubleStochastic:
             adam_lr: float = 1e-3,              # learning rate for Adam
             verbose: bool = False,              # verbose
             store_params_trace: bool = False,   # store the trace of the parameters
-            approx_type: str = "full",          # type of approximation: "diag" or "full"
-            sticking_the_landing: bool = True, # whether to stick the landing
+            approx_type: str = "full",          # "diag" or "full" or "mixture"
+            mixing_components: int = 10,        # number of components for the mixture
+            sticking_the_landing: bool = True,  # whether to stick the landing
             use_jit: bool = True,               # whether to use JIT compilation
             ):
-        # check the approx_type
-        error_msg = "Invalid approx_type: must be 'diag' or 'full'"
-        assert approx_type in ["diag", "full"], error_msg
-        
+        # check the approx_type is valid
+        valid_approx = ["diag", "full", "mixture"]
+        error_msg = f"Invalid approx_type. \n Must be one of {valid_approx}"
+        assert approx_type in valid_approx, error_msg
         
         ##############################
         # FULL COVARIANCE
@@ -107,9 +108,9 @@ class DoubleStochastic:
                     """ compute the entropy of the variational distribution
                     (entropy) = -E_q[log q]
                     """
-                    #diag = jnp.exp(params["log_diag"])
-                    #cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
-                    #entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
+                    # diag = jnp.exp(params["log_diag"])
+                    # cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
+                    # entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
                     entropy = -jnp.mean(log_q(params, xs))
                     return entropy
             
@@ -142,8 +143,7 @@ class DoubleStochastic:
                 log_std_init = jnp.zeros(self.dim)
 
             # initialize the parameters
-            mu = mu_init
-            params = {"mu": mu, "log_diag": log_std_init}
+            params = {"mu": mu_init, "log_diag": log_std_init}
 
             def generate_samples(params, key):
                 """ generate samples from the variational distribution """
@@ -203,7 +203,103 @@ class DoubleStochastic:
                 entropy = compute_entropy(params_stop, xs)
                 kl = -entropy - self.logtarget.batch(xs).mean()
                 return kl
-        
+            
+        ##############################
+        # MIXTURE
+        ##############################
+        if approx_type == "mixture":
+            assert mixing_components >= 2, "mixing_components must be >= 2"
+            # extract initial parameters if provided
+            if mu_init is None:
+                mu_init = jnp.zeros(self.dim)
+            if log_std_init is None:
+                log_std_init = jnp.zeros(self.dim)
+            
+            # sample K times from N(mu_init, cov_init)
+            key, key_ = jr.split(key)
+            K = mixing_components
+            zs = jr.normal(key_, shape=(K, self.dim))
+            # Compute pairwise squared distances
+            pairwise_distances_sq = jnp.sum((zs[:, None, :] - zs[None, :, :]) ** 2, axis=-1)
+            pairwise_distances = jnp.sqrt(pairwise_distances_sq)
+            M = jnp.max(pairwise_distances)
+            pairwise_distances = pairwise_distances + jnp.eye(K) * M
+            nearest_neighbor_distances = jnp.min(pairwise_distances, axis=1)
+            avg_nearest_neighbor_distance = jnp.mean(nearest_neighbor_distances)
+            mus = jnp.exp(log_std_init)*zs + mu_init[None, :]
+            log_stds = jnp.ones((K, self.dim))*log_std_init + jnp.log(avg_nearest_neighbor_distance / 2.)
+            log_alphas = jnp.log(jnp.ones(K)/K)
+            
+            # initialize the parameters
+            params = {"mus": mus, "log_stds": log_stds, "log_alphas": log_alphas}
+            
+            def generate_samples(p, key):
+                """ generate samples from the variational distribution """
+                mu = p["mu"]
+                stds = jnp.exp(p["log_diag"])
+                zs = jr.normal(key, shape=(n_samples, self.dim))
+                xs = stds[None, :] * zs + mu[None, :]
+                # zs: samples from standard normal
+                # xs: samples from q
+                return xs, zs
+                        
+            def log_q(params, xs):
+                def log_q_indiv(mu, log_std, xs):
+                    """ log density of the variational distribution """
+                    diag = jnp.exp(log_std)
+                    log_Z = 0.5*self.dim*jnp.log(2*jnp.pi) + 0.5*jnp.sum(jnp.log(diag**2))
+                    xs_white = (xs - mu[None, :]) / diag[None, :]
+                    return -0.5*jnp.sum(xs_white**2, axis=1) - log_Z
+                log_q_indiv_vmap = jax.vmap(log_q_indiv, in_axes=(0, 0, None))
+                mus = params["mus"]
+                log_stds = params["log_stds"]
+                log_alphas = params["log_alphas"]
+                alphas = jnp.exp(log_alphas)
+                alphas = alphas / jnp.sum(alphas)
+                log_alphas = jnp.log(alphas)
+                log_qs = log_q_indiv_vmap(mus, log_stds, xs)
+                return jax.nn.logsumexp(log_qs + log_alphas[:,None], axis=0)
+                
+            def clean_params(params):
+                log_alphas = params["log_alphas"]
+                alphas = jnp.exp(log_alphas)
+                alphas = alphas / jnp.sum(alphas)
+                params["log_alphas"] = jnp.log(alphas)
+                return params
+            
+            def postprocess_params(params):
+                """ post-processing before returning the parameters to user """
+                return params
+
+            def KL(params, key):
+                """ KL divergence between q and p with repametrization trick:
+                KL = E_q[log q/p] = -Entropy(q) - E_q[log p]
+                q is parametrized by mu and cov_chol
+                """
+                # extract mixture parameters
+                log_alphas = params["log_alphas"]
+                alphas = jnp.exp(log_alphas)
+                alphas = alphas / jnp.sum(alphas)
+                
+                kl_list = []
+                for k in range(K):
+                    mu = params["mus"][k]
+                    log_std = params["log_stds"][k]
+                    params_k = {"mu": mu, "log_diag": log_std}
+                    
+                    # generate samples xs from q_k
+                    key, key_ = jr.split(key)
+                    xs, _ = generate_samples(params_k, key_)
+                    if sticking_the_landing:
+                        params_stop = jax.lax.stop_gradient(params)
+                        entropy = -jnp.mean(log_q(params_stop, xs))
+                    else:
+                        entropy = -jnp.mean(log_q(params, xs))
+                    kl_list.append(alphas[k] * (-entropy - self.logtarget.batch(xs).mean()))
+                # kl = jnp.sum(alphas * kl_arr)
+                kl = jnp.sum(jnp.array(kl_list))
+                return kl
+
         # Compute the gradient of the KL divergence
         kl_value_and_grad = jax.value_and_grad(KL)
 
