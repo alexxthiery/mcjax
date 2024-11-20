@@ -37,11 +37,13 @@ class DoubleStochastic:
             verbose: bool = False,              # verbose
             store_params_trace: bool = False,   # store the trace of the parameters
             approx_type: str = "full",          # type of approximation: "diag" or "full"
+            sticking_the_landing: bool = True, # whether to stick the landing
             use_jit: bool = True,               # whether to use JIT compilation
             ):
         # check the approx_type
         error_msg = "Invalid approx_type: must be 'diag' or 'full'"
         assert approx_type in ["diag", "full"], error_msg
+        
         
         ##############################
         # FULL COVARIANCE
@@ -73,6 +75,16 @@ class DoubleStochastic:
                 # zs: samples from standard normal
                 # xs: samples from q
                 return xs, zs
+            
+            def log_q(params, xs):
+                """ log density of the variational distribution """
+                mu = params["mu"]
+                diag = jnp.exp(params["log_diag"])
+                cov_chol = jnp.diag(diag) + jnp.tril(params["cov_chol_lower"], k=-1)
+                log_Z = 0.5*self.dim*jnp.log(2*jnp.pi) + 0.5*jnp.sum(jnp.log(diag**2))
+                xs_white = jnp.linalg.solve(cov_chol, (xs - mu[None, :]).T).T
+                log_q = -0.5*jnp.sum(xs_white**2, axis=1) - log_Z
+                return log_q
 
             def clean_params(params):
                 """ post-processing after gradient update """
@@ -91,20 +103,31 @@ class DoubleStochastic:
                 KL = E_q[log q/p] = -Entropy(q) - E_q[log p]
                 q is parametrized by mu and cov_chol
                 """
-                def compute_entropy(params, zs):
+                def compute_entropy(params, xs):
                     """ compute the entropy of the variational distribution
                     (entropy) = -E_q[log q]
                     """
-                    diag = jnp.exp(params["log_diag"])
-                    cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
-                    entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
+                    #diag = jnp.exp(params["log_diag"])
+                    #cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
+                    #entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
+                    entropy = -jnp.mean(log_q(params, xs))
                     return entropy
             
                 # generate samples xs from q
                 key, key_ = jr.split(key)
-                xs, zs = generate_samples(params, key_)
+                xs, _ = generate_samples(params, key_)
+                
                 # compute entropy
-                entropy = compute_entropy(params, zs)
+                if sticking_the_landing:
+                    # Reference:
+                    # "Sticking the Landing: Simple, Lower-Variance Gradient Estimators for Variational Inference"
+                    # Geoffrey Roeder, Yuhuai Wu, David Duvenaud
+                    # https://arxiv.org/abs/1703.09194
+                    params_stop = jax.lax.stop_gradient(params)
+                    entropy = compute_entropy(params_stop, xs)
+                else:
+                    entropy = compute_entropy(params, xs)
+                entropy = compute_entropy(params_stop, xs)
                 kl = -entropy - self.logtarget.batch(xs).mean()
                 return kl
             
@@ -131,6 +154,15 @@ class DoubleStochastic:
                 # zs: samples from standard normal
                 # xs: samples from q
                 return xs, zs
+            
+            def log_q(params, xs):
+                """ log density of the variational distribution """
+                mu = params["mu"]
+                diag = jnp.exp(params["log_diag"])
+                log_Z = 0.5*self.dim*jnp.log(2*jnp.pi) + 0.5*jnp.sum(jnp.log(diag**2))
+                xs_white = (xs - mu[None, :]) / diag[None, :]
+                log_q = -0.5*jnp.sum(xs_white**2, axis=1) - log_Z
+                return log_q
 
             def clean_params(params):
                 return params
@@ -145,20 +177,30 @@ class DoubleStochastic:
                 KL = E_q[log q/p] = -Entropy(q) - E_q[log p]
                 q is parametrized by mu and cov_chol
                 """
-                def compute_entropy(params, zs):
+                def compute_entropy(params, xs):
                     """ compute the entropy of the variational distribution
                     (entropy) = -E_q[log q]
                     """
-                    diag = jnp.exp(params["log_diag"])
-                    cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
-                    entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
+                    # diag = jnp.exp(params["log_diag"])
+                    # cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
+                    # entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
+                    entropy = -jnp.mean(log_q(params, xs))
                     return entropy
             
                 # generate samples xs from q
                 key, key_ = jr.split(key)
                 xs, zs = generate_samples(params, key_)
                 # compute entropy
-                entropy = compute_entropy(params, zs)
+                if sticking_the_landing:
+                    # Reference:
+                    # "Sticking the Landing: Simple, Lower-Variance Gradient Estimators for Variational Inference"
+                    # Geoffrey Roeder, Yuhuai Wu, David Duvenaud
+                    # https://arxiv.org/abs/1703.09194
+                    params_stop = jax.lax.stop_gradient(params)
+                    entropy = compute_entropy(params_stop, xs)
+                else:
+                    entropy = compute_entropy(params, xs)
+                entropy = compute_entropy(params_stop, xs)
                 kl = -entropy - self.logtarget.batch(xs).mean()
                 return kl
         
