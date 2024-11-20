@@ -60,7 +60,7 @@ class IsotropicGauss(LogDensity):
 # ==================================
 class DiagGauss(LogDensity):
     """ Gaussian Distribution with Diagonal Covariance Matrix:
-    The covariance matrix is a scalar multiple of the identity matrix
+    The covariance matrix is diagonal
      mu: mean vector
      log_var: vector with marginal log variance
     """
@@ -171,23 +171,32 @@ class Gauss(LogDensity):
         self.update_cov(cov=cov, cov_inv=cov_inv)
 
     def logdensity(self, x):
-        log_unormalized = -0.5 * jnp.dot((x-self.mu), self.cov_inv @ (x-self.mu))
+        # assert the shape of x
+        assert x.shape == (self.dim,), "Invalid input shape"
+        x_centred = x - self.mu
+        log_unormalized = -0.5 * jnp.sum(x_centred * (self.cov_inv @ x_centred))
         return log_unormalized - self._log_Z
 
     def batch(
             self,
             x_batch,   # (B, D): B batch size, D dimension
             ):
+        # assert the shape of x_batch
+        assert x_batch.ndim == 2, "Invalid input shape: x_batch.ndim must be 2"
+        assert x_batch.shape[1] == self.dim, "Invalid input shape: x_batch.shape[1] must be equal to self.dim"
         x_centred = x_batch - self.mu[None, :]
         return -0.5*jnp.sum(x_centred * (x_centred @ self.cov_inv.T), axis=-1) - self._log_Z
     
     def grad(self, x):
+        assert x.shape == (self.dim,), "Invalid input shape"
         return -self.cov_inv @ (x - self.mu)
     
     def grad_batch(
                 self,
                 x_batch,   # (B, D): B batch size, D dimension
                 ):
+        assert x_batch.ndim == 2, "Invalid input shape: x_batch.ndim must be 2"
+        assert x_batch.shape[1] == self.dim, "Invalid input shape: x_batch.shape[1] must be equal to self.dim"        
         x_centred = x_batch - self.mu[None, :]
         return -x_centred @ self.cov_inv.T
     

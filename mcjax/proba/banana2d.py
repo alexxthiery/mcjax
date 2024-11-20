@@ -21,6 +21,8 @@ class Banana2D(LogDensity):
 
     # define the logpdf
     def logdensity(self, x):
+        # assert the dimension
+        assert x.shape == (self.dim,), "Invalid dimension"
         x0, x1 = x[0], x[1]
         return -0.5*((x0 - 1.)**2 + (x1 - x0**2)**2 / self.noise_std**2)
 

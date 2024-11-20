@@ -30,6 +30,8 @@ class NealFunnel(LogDensity):
 
     # define the logpdf
     def logdensity(self, x):
+        # assert the dimension
+        assert x.shape == (self.dim,), "Invalid dimension"
         x0, x1 = x[0], x[1:]
         std = jnp.exp(x0/2.)
         return -0.5*(x0/self.sigma_x)**2 - 0.5*jnp.sum(x1/std)**2 - 0.5*(self.dim-1)*jnp.log(std**2)

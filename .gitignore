@@ -13,6 +13,11 @@ __pycache__/
 # do not track ./notebooks/playground folder
 notebooks/playground/
 
+# don't track videos mp4 mov etc.. in any folder and subfolder
+**/*.mp4
+**/*.mov
+**/*.avi
+
 # C extensions
 *.so
 
