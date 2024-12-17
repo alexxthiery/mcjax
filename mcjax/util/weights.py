@@ -49,6 +49,7 @@ def target_ess_normalized(
         log_weights: jnp.ndarray,       # log weights
         ess_normalized_target: float,   # target ess_normalized
         tmax: float = 1.,               # max temperature
+        tmin: float = 0.,               # min temperature
         tol: float = 10**-5,            # tolerance for the bissection
         ):
     """
@@ -56,7 +57,6 @@ def target_ess_normalized(
     such that ESS_normalized(t*log_weights) = ess_normalized_target.
     If ESS_normalized(tmax*log_weights) >= ess_normalized_target, return tmax.
     """
-    tmin = 0.
 
     ess_tmax = ess_normalized_log_weight(tmax*log_weights)
     if ess_tmax >= ess_normalized_target:
