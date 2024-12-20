@@ -2,10 +2,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from typing import TypedDict, Tuple, Dict, NamedTuple
-from mcjax.proba.density import LogDensity
-from .markov import MarkovKernel
-from mcjax.mcmc.rwm import Rwm
-from mcjax.util.weights import target_ess_normalized
+from mcjax.proba.density import LogDensity,LogDensityGeneral
+from ..mcmc.markov import MarkovKernel
+from mcjax.mcmc.rwm import Rwm, RwmState
+from mcjax.mcmc.mala import Mala, MalaState
+from mcjax.util.weights import ess_normalized_log_weight
+
 
 class SmcState(TypedDict):
     """ State storing the states of SMC """
@@ -53,7 +55,7 @@ class GeometricSMC():
         mc_function = mc_methods[mc_method]
         for i in range(self.num_substeps):
             key, key_ = jr.split(key)
-            new_particles = self.random_walk_batch(t, jnp.array(new_particles), key_)
+            new_particles = self.random_walk_batch(t, jnp.array(new_particles), key_, )
 
         return SmcState(particles=new_particles, weights=updated_weights)
     
@@ -71,56 +73,59 @@ class GeometricSMC():
         return resampled_particles
     
     # Random walk Metropolis kernel
-    def random_walk(self, t, particle: jnp.ndarray, key: jax.Array):
-        """ Perform RWM for each particle """
-        new_particle = particle + jr.normal(key, particle.shape) * self.step_size
-        gamma_t_current = self.coefs[t] * self.log_gamma_T.logdensity(particle) \
-            + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(particle)
-        gamma_t_proposal = self.coefs[t] * self.log_gamma_T.logdensity(new_particle) \
-            + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(new_particle)
+    # def random_walk(self, t, particle: jnp.ndarray, key: jax.Array):
+    #     """ Perform RWM for each particle """
+    #     new_particle = particle + jr.normal(key, particle.shape) * self.step_size
+    #     gamma_t_current = self.coefs[t] * self.log_gamma_T.logdensity(particle) \
+    #         + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(particle)
+    #     gamma_t_proposal = self.coefs[t] * self.log_gamma_T.logdensity(new_particle) \
+    #         + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(new_particle)
         
-        # accept or reject
-        key, key_ = jr.split(key)
-        u = jr.uniform(key_)
-        log_ratio = gamma_t_proposal - gamma_t_current
-        accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
-        accept = u < accept_MH
-        new_particle = jnp.where(accept, new_particle, particle)
-        return new_particle
+    #     # accept or reject
+    #     key, key_ = jr.split(key)
+    #     u = jr.uniform(key_)
+    #     log_ratio = gamma_t_proposal - gamma_t_current
+    #     accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
+    #     accept = u < accept_MH
+    #     new_particle = jnp.where(accept, new_particle, particle)
+    #     return new_particle
     
     def random_walk_batch(self, t, particles: jnp.ndarray, key: jax.Array):
-        vectorized_walk = jax.vmap(self.random_walk, in_axes=(None, 0, 0))
-        key_batch = jr.split(key, particles.shape[0])
-        new_particles = vectorized_walk(t, particles, key_batch)
-        return new_particles
+        logdensity = LogDensityGeneral(logdensity = lambda x: self.coefs[t] * self.log_gamma_T.logdensity(x) \
+            + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
+        rwm = Rwm(logtarget=logdensity, step_size = self.step_size)
+        state = RwmState(x=particles, logdensity=logdensity.batch(particles))
+        new_particles,_ = rwm.step(state, key)
+        return new_particles['x']
 
-    # MALA kernel
-    def mala(self, t, particle: jnp.ndarray, key: jax.Array):
-        """ Perform MALA for each particle """
-        grad_gamma_t = self.coefs[t] * self.log_gamma_T.grad(particle) \
-            + (1 - self.coefs[t]) * self.log_gamma_0.grad(particle)
-        noise = jr.normal(key, particle.shape)
-        new_particle = particle + self.step_size * grad_gamma_t + jnp.sqrt(2 * self.step_size) * noise
-        gamma_t_current = self.coefs[t] * self.log_gamma_T.logdensity(particle) \
-            + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(particle)
-        gamma_t_proposal = self.coefs[t] * self.log_gamma_T.logdensity(new_particle) \
-            + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(new_particle)
+    # MALA kernel ()
+    # def mala(self, t, particle: jnp.ndarray, key: jax.Array):
+    #     """ Perform MALA for each particle """
+    #     grad_gamma_t = self.coefs[t] * self.log_gamma_T.grad(particle) \
+    #         + (1 - self.coefs[t]) * self.log_gamma_0.grad(particle)
+    #     noise = jr.normal(key, particle.shape)
+    #     new_particle = particle + self.step_size * grad_gamma_t + jnp.sqrt(2 * self.step_size) * noise
+    #     gamma_t_current = self.coefs[t] * self.log_gamma_T.logdensity(particle) \
+    #         + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(particle)
+    #     gamma_t_proposal = self.coefs[t] * self.log_gamma_T.logdensity(new_particle) \
+    #         + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(new_particle)
         
-        # accept or reject
-        key, key_ = jr.split(key)
-        u = jr.uniform(key_)
-        log_ratio = gamma_t_proposal - gamma_t_current
-        accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
-        accept = u < accept_MH
-        new_particle = jnp.where(accept, new_particle, particle)
-        return new_particle
+    #     # accept or reject
+    #     key, key_ = jr.split(key)
+    #     u = jr.uniform(key_)
+    #     log_ratio = gamma_t_proposal - gamma_t_current
+    #     accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
+    #     accept = u < accept_MH
+    #     new_particle = jnp.where(accept, new_particle, particle)
+    #     return new_particle
 
     def mala_batch(self, t, particles: jnp.ndarray, key: jax.Array):
-        vectorized_walk = jax.vmap(self.mala, in_axes=(None, 0, 0))
-        key_batch = jr.split(key, particles.shape[0])
-        new_particles = vectorized_walk(t, particles, key_batch)
-        
-        return new_particles
+        logdensity = LogDensityGeneral(logdensity = lambda x: self.coefs[t] * self.log_gamma_T.logdensity(x) \
+            + (1 - self.coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
+        mala = Mala(logtarget=logdensity, step_size = self.step_size)
+        state = MalaState(x=particles, logdensity=logdensity.batch(particles))
+        new_particles,_ = mala.step(state, key)
+        return new_particles['x']
 
     def compute_weights(self, t, resampled_particle: jnp.ndarray):
         """ Compute the weights as the ratio of the target densities """
@@ -144,7 +149,7 @@ class GeometricSMC():
         state = SmcState(particles=initial_particles, weights=initial_weights)
         states = [state]  
         for t in range(1, len(self.coefs)):
-            state = self.step(t, mc_method,state, key)
+            state = self.step(t, mc_method, state, key)
             states.append(state)
         return states
 
@@ -161,31 +166,50 @@ class GeometricSMC():
             states.append(state)
             # Update the coefficients
             key, key_ = jr.split(key)
-            self.coefs[t] = self.update_coef(t, state, key)
+            self.coefs[t] = self.update_coef(t, state, key, ess_normalized_target=0.7)
         return states
-    
-    def update_coef(self, t, state, key):
-        # use target_ess_normalized to find the optimal coefficient by bissection
-        log_weights = jnp.log(state["weights"])
-        target = 0.5    
-        coef = target_ess_normalized(log_weights, target,tmax=1.,tmin=self.coefs[t-1],tol=10**-5)
-        return coef
 
-    # calculate the variance of the normalizing constant estimator
+
+    def update_coef(self, t, state, key, ess_normalized_target, tol = 1e-5):
+        # use target_ess_normalized to find the optimal coefficient by bissection
+        # If ESS_normalized(tmax*log_weights) >= ess_normalized_target, return tmax.
+        coef_max = 1.0
+        coef_min = self.coefs[t-1]
+
+        # calculate the log_weights (log_weight) of: log_gamma_t(x_{t-1}) - log_gamma_0(x_{t-1})
+        log_weights = self.log_gamma_T.batch(state["particles"]) - self.log_gamma_0.batch(state["particles"])
+        ess_tmax = ess_normalized_log_weight((coef_max-coef_min) * log_weights)
+        if ess_tmax >= ess_normalized_target:
+            return coef_max
+        while coef_max - coef_min > tol:
+            coef = (coef_max + coef_min) / 2
+            ess_new = ess_normalized_log_weight(coef * log_weights)
+            if ess_new > ess_normalized_target:
+                coef_max = coef
+            else:
+                coef_min = coef
+        return (coef_max + coef_min) / 2
+
+    # calculate the normalizing constant estimator for a single run
+    def single_run(self, num_particles, key, mc_method):
+        states = self.run(num_particles, key, mc_method)
+        Z = jnp.sum(jnp.array([jnp.log(jnp.mean(state["weights"])) for state in states]))
+        return Z
+
+    # calculate the variance of the normalizing constant estimator (in log)
     def compute_variance(self, key, num_particles, mc_method,N=100):
         '''
         Variance for N times of the normalizing constant estimator
         Z = \Pi_{t=1}^T 1/N \sum_{n=1}^N w_t(x_{t-1}^n) 
         '''
-        key_batch = jr.split(key, N)
-        Z_list = []
-        for i in range(N):
-            states = self.run(num_particles,key_batch[i],mc_method)
-            Z = 1
-            for state in states:
-                Z = Z * jnp.mean(state["weights"])
-            Z_list.append(Z)
-        Z_var = jnp.var(jnp.array(Z_list))
+        # Vectorize the computation over N keys
+        keys = jr.split(key, N)
+        mult_run = jax.vmap(self.single_run, in_axes=(None,0,None))
+        mult_run = jax.jit(mult_run,static_argnums=(0,2))
+        Z_arr = mult_run(num_particles,keys,mc_method)
+
+        # Compute the variance of log(Z)
+        Z_var = jnp.var(Z_arr)
         return Z_var
 
 
