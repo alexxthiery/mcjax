@@ -87,26 +87,24 @@ class Rwm(MarkovKernel):
         
         # create a proposal
         key, key_ = jr.split(key)
-        x_prop = x + jr.normal(key_, (self.dim,)) * self.step_size
-        logtarget_proposal = self.logtarget(x_prop)
+        x_prop = x + jr.normal(key_, (x.shape)) * self.step_size
+        logtarget_proposal = self.logtarget.batch(x_prop)
         
-        # accept or reject
-        key, key_ = jr.split(key)
-        u = jr.uniform(key_)
+        # accept or reject for a batch of samples
         log_ratio = logtarget_proposal - logtarget_current
         accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
+
+        # square jump distance statistics (for a batch of samples)
+        sq_jump = (x_prop - x)**2
         
-        # square jump distance statistics
-        sq_jump = accept_MH * jnp.linalg.norm(x_prop - x)**2
-        
-        # metropolis-hastings acceptance
+        # metropolis-hastings acceptance (for a batch of samples)
+        key, key_ = jr.split(key)
+        u = jr.uniform(key_, shape=(x.shape[0],)) 
         is_accept = u < accept_MH
+        is_accept = is_accept[:, None]
         x_new = jnp.where(is_accept, x_prop, x)
-        logdensity_new = jnp.where(
-                                is_accept,
-                                logtarget_proposal,
-                                logtarget_current)
         
+        logdensity_new = self.logtarget.batch(x_new)
         # create the new state
         state_new = RwmState(x=x_new, logdensity=logdensity_new)
         
