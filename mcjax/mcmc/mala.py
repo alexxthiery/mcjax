@@ -7,10 +7,15 @@ from mcjax.proba.gaussian import IsotropicGauss
 from mcjax.proba.density import LogDensity
 from .markov import MarkovKernel
 
+from dataclasses import dataclass
+# from jax.tree_util import register_pytree_node_class
+
 # ========================
 # Metropolis Adjusted Langevin Algorithm
 # ========================
-class MalaState(TypedDict):
+# @register_pytree_node_class
+@dataclass
+class MalaState:
     """ State storing the current state of the MALA kernel 
     x: current point
     logdensity: pdf of the proposal function Z \propto q(x,.) = N(x-\epsilon \grad(V(x)), 2\epsilon I)
@@ -18,7 +23,9 @@ class MalaState(TypedDict):
     x: jnp.ndarray
     logdensity: jnp.ndarray
 
-class MalaStats(TypedDict):
+# @register_pytree_node_class
+@dataclass
+class MalaStats:
     """ Stores the statistics of MALA at each step
     is_accept: whether the drawn z is accepted or not
     accept_MH: the threshold "a" in Metropolis-Hastings
@@ -30,11 +37,12 @@ class Mala(MarkovKernel):
 
     def __init__(self,
                  *,
-                 logdensity:LogDensity,
-                 epsilon):
-        self.logdensity = logdensity
-        self._dim = logdensity.dim
-        self.epsilon = epsilon
+                 logtarget:LogDensity,
+                 step_size: float
+                 ):
+        self.logtarget = logtarget
+        self._dim = logtarget.dim
+        self.step_size = step_size
         
 
     def init_state(
@@ -45,7 +53,7 @@ class Mala(MarkovKernel):
         # check the dimension of the initial point
         assert x_init.shape == (self._dim,), "Invalid initial point"
         
-        state = MalaState(x=x_init, logdensity=self.logdensity(x_init))
+        state = MalaState(x=x_init, logdensity=self.logtarget(x_init))
         return state
     
     def step(self,
@@ -56,23 +64,23 @@ class Mala(MarkovKernel):
         A single step of MALA sampling
         """
         # unpack the state and density function
-        x = state['x']
-        logtarget_current = state['logdensity']
+        x = state.x
+        logtarget_current = state.logdensity
         
         # create a proposal
         key, key_ = jr.split(key)
         # \log(f(x)) \propto -V(x) 
 
-        x_prop = x + self.epsilon*self.logdensity.grad_batch(x) + jr.normal(key_, (x.shape)) *jnp.sqrt(2*self.epsilon)
-        logtarget_proposal = self.logdensity.batch(x_prop)
+        x_prop = x + self.step_size*self.logtarget.grad_batch(x) + jr.normal(key_, (x.shape)) *jnp.sqrt(2*self.step_size)
+        logtarget_proposal = self.logtarget.batch(x_prop)
         
         # accept or reject
         key, key_ = jr.split(key)
         u = jr.uniform(key_, shape=(x.shape[0],)) 
         log_f_ratio = logtarget_proposal - logtarget_current
-        log_q_ratio = (jnp.linalg.norm(x_prop - x - self.epsilon*self.logdensity.grad(x))**2 - \
-                       jnp.linalg.norm(x - x_prop - self.epsilon*self.logdensity.grad(x_prop))**2)\
-                        /(4*self.epsilon)
+        log_q_ratio = (jnp.linalg.norm(x_prop - x - self.step_size*self.logtarget.grad_batch(x))**2 - \
+                       jnp.linalg.norm(x - x_prop - self.step_size*self.logtarget.grad_batch(x_prop))**2)\
+                        /(4*self.step_size)
         accept_MH = jnp.exp(jnp.minimum(0., log_f_ratio+log_q_ratio))
         is_accept = u < accept_MH
         is_accept = is_accept[:, None]

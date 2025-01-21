@@ -5,18 +5,21 @@ from typing import TypedDict, Tuple, Dict
 from mcjax.proba.density import LogDensity
 from .markov import MarkovKernel
 
+from dataclasses import dataclass
 
 # ==================================
 # Random Walk Metropolis-Hastings
 # with Gaussian proposal distribution
 # ==================================
-class RwmState(TypedDict):
+
+@dataclass
+class RwmState:
     """ State storing the current state of the RWM kernel """
     x: jnp.ndarray
     logdensity: jnp.ndarray
 
-
-class RwmStats(TypedDict):
+@dataclass
+class RwmStats:
     """ Stores the statistics of RWM steps """
     sq_jump: jnp.ndarray
     is_accept: jnp.ndarray
@@ -82,8 +85,8 @@ class Rwm(MarkovKernel):
             ) -> Tuple[RwmState, RwmStats]:
         """ Perform a single step of the RWM kernel """                
         # unpack the state and key
-        x = state['x']
-        logtarget_current = state['logdensity']
+        x = state.x
+        logtarget_current = state.logdensity
         
         # create a proposal
         key, key_ = jr.split(key)
