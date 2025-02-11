@@ -6,24 +6,27 @@ from mcjax.proba.density import LogDensity
 from .markov import MarkovKernel
 
 from dataclasses import dataclass
+from flax import struct
 
 # ==================================
 # Random Walk Metropolis-Hastings
 # with Gaussian proposal distribution
 # ==================================
 
-@dataclass
+@struct.dataclass
 class RwmState:
     """ State storing the current state of the RWM kernel """
     x: jnp.ndarray
     logdensity: jnp.ndarray
 
-@dataclass
+@struct.dataclass
 class RwmStats:
     """ Stores the statistics of RWM steps """
     sq_jump: jnp.ndarray
     is_accept: jnp.ndarray
     accept_MH: jnp.ndarray
+    step_size: float
+    acc_rate: float
 
 
 class Rwm(MarkovKernel):
@@ -82,6 +85,7 @@ class Rwm(MarkovKernel):
             self,
             state: RwmState,    # current state
             key: jax.Array,     # random key
+            step_size: float    # step size
             ) -> Tuple[RwmState, RwmStats]:
         """ Perform a single step of the RWM kernel """                
         # unpack the state and key
@@ -90,7 +94,7 @@ class Rwm(MarkovKernel):
         
         # create a proposal
         key, key_ = jr.split(key)
-        x_prop = x + jr.normal(key_, (x.shape)) * self.step_size
+        x_prop = x + jr.normal(key_, (x.shape)) * step_size
         logtarget_proposal = self.logtarget.batch(x_prop)
         
         # accept or reject for a batch of samples
@@ -111,12 +115,46 @@ class Rwm(MarkovKernel):
         # create the new state
         state_new = RwmState(x=x_new, logdensity=logdensity_new)
         
+        acc_rate = jnp.mean(is_accept)
         # store the statistics
         statistics = RwmStats(
                         sq_jump=sq_jump,
                         is_accept=is_accept,
-                        accept_MH=accept_MH)
+                        accept_MH=accept_MH,
+                        step_size=step_size,
+                        acc_rate=acc_rate)
         return state_new, statistics
+    
+    def adaptive_step(self, state, key, max_iter=5):
+        '''
+        Take a step with adaptive step size: reiterate until the acceptance rate is within [0.2,0.5]
+        '''
+        key, key_ = jr.split(key)
+        state, stats = self.step(state, key_, self.step_size)
+
+        def cond_fun(carry):
+            state, iter, key, stats = carry
+            acc = stats.acc_rate
+            return jnp.logical_and(~((acc >= 0.2) & (acc <= 0.5)), iter < max_iter)
+
+        def body_fun(carry):
+            state, iter, key, stats = carry
+            step_size = stats.step_size
+            key, key_ = jr.split(key)
+            state_new, stats_new = self.step(state, key_, step_size)
+            acc_rate = stats_new.acc_rate
+            eta = 0.5; acc_target= 0.234
+            new_step_size = jnp.exp(jnp.log(step_size) + eta * (acc_rate - acc_target))
+            stats_new = RwmStats(sq_jump=stats_new.sq_jump, \
+                                is_accept=stats_new.is_accept, \
+                                accept_MH=stats_new.accept_MH, \
+                                step_size=new_step_size, \
+                                acc_rate=acc_rate)
+            return (state_new, iter+1, key, stats_new)
+        
+        carry = (state, 0, key, stats)
+        state, _, _, stats = jax.lax.while_loop(cond_fun, body_fun, carry)
+        return state, stats
     
     def summarize_stats_traj(
             self,
