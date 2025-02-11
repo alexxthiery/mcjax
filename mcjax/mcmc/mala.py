@@ -8,13 +8,12 @@ from mcjax.proba.density import LogDensity
 from .markov import MarkovKernel
 
 from dataclasses import dataclass
-# from jax.tree_util import register_pytree_node_class
+from flax import struct
 
 # ========================
 # Metropolis Adjusted Langevin Algorithm
 # ========================
-# @register_pytree_node_class
-@dataclass
+@struct.dataclass   
 class MalaState:
     """ State storing the current state of the MALA kernel 
     x: current point
@@ -23,8 +22,7 @@ class MalaState:
     x: jnp.ndarray
     logdensity: jnp.ndarray
 
-# @register_pytree_node_class
-@dataclass
+@struct.dataclass  
 class MalaStats:
     """ Stores the statistics of MALA at each step
     is_accept: whether the drawn z is accepted or not
@@ -32,6 +30,9 @@ class MalaStats:
     """
     is_accept: jnp.ndarray
     accept_MH: jnp.ndarray
+    step_size: float
+    acc_rate: float
+    
 
 class Mala(MarkovKernel):
 
@@ -58,7 +59,8 @@ class Mala(MarkovKernel):
     
     def step(self,
              state:MalaState,
-             key
+             key,
+             step_size
              ) -> Tuple[MalaState,MalaStats]:
         """
         A single step of MALA sampling
@@ -66,40 +68,83 @@ class Mala(MarkovKernel):
         # unpack the state and density function
         x = state.x
         logtarget_current = state.logdensity
-        
+
         # create a proposal
         key, key_ = jr.split(key)
         # \log(f(x)) \propto -V(x) 
 
-        x_prop = x + self.step_size*self.logtarget.grad_batch(x) + jr.normal(key_, (x.shape)) *jnp.sqrt(2*self.step_size)
+        x_prop = x + step_size*self.logtarget.grad_batch(x) + jr.normal(key_, (x.shape)) *jnp.sqrt(2*self.step_size)
         logtarget_proposal = self.logtarget.batch(x_prop)
         
         # accept or reject
         key, key_ = jr.split(key)
         u = jr.uniform(key_, shape=(x.shape[0],)) 
         log_f_ratio = logtarget_proposal - logtarget_current
-        log_q_ratio = (jnp.linalg.norm(x_prop - x - self.step_size*self.logtarget.grad_batch(x))**2 - \
-                       jnp.linalg.norm(x - x_prop - self.step_size*self.logtarget.grad_batch(x_prop))**2)\
-                        /(4*self.step_size)
+        log_q_ratio = (jnp.linalg.norm(x_prop - x - step_size*self.logtarget.grad_batch(x), axis=1)**2 - \
+                       jnp.linalg.norm(x - x_prop - step_size*self.logtarget.grad_batch(x_prop),axis=1)**2)\
+                        /(4*step_size)
+
         accept_MH = jnp.exp(jnp.minimum(0., log_f_ratio+log_q_ratio))
         is_accept = u < accept_MH
-        is_accept = is_accept[:, None]
-        x_new = jnp.where(is_accept, x_prop, x)
-
         logdensity_new = jnp.where(
                                 is_accept,
                                 logtarget_proposal,
                                 logtarget_current)
         
+        is_accept = is_accept[:, None]
+        x_new = jnp.where(is_accept, x_prop, x)
+
+        
         # create the new state
         state_new = MalaState(x=x_new, logdensity=logdensity_new)
+    
         
+        # # update the step size
+        acc_rate = jnp.mean(is_accept)
+
         # store the statistics
         statistics = MalaStats(
                         is_accept=is_accept,
-                        accept_MH=accept_MH)
+                        accept_MH=accept_MH,
+                        step_size = step_size,
+                        acc_rate=acc_rate)
+    
+
         return state_new, statistics
     
+    def adaptive_step(self, state, key, max_iter=5):
+        '''
+        Take a step with adaptive step size: reiterate until the acceptance rate is within [0.2,0.5]
+        '''
+        key, key_ = jr.split(key)
+        state, stats = self.step(state, key_, self.step_size)
+
+        def cond_fun(carry):
+            state, iter, key, stats = carry
+            acc = stats.acc_rate
+            return jnp.logical_and(~((acc >= 0.4) & (acc <= 0.7)), iter < max_iter)
+
+        def body_fun(carry):
+            state, iter, key, stats = carry
+            step_size = stats.step_size
+            key, key_ = jr.split(key)
+            state_new, stats_new = self.step(state, key_, step_size)
+            acc_rate = stats_new.acc_rate
+            eta = 0.5; acc_target= 0.574
+            new_step_size = jnp.exp(jnp.log(step_size) + eta * (acc_rate - acc_target))
+            stats_new = MalaStats(is_accept=stats_new.is_accept, \
+                                accept_MH=stats_new.accept_MH, \
+                                step_size=new_step_size, \
+                                acc_rate=acc_rate)
+            return (state_new, iter+1, key, stats_new)
+        
+        carry = (state, 0, key, stats)
+        state, _, _, stats = jax.lax.while_loop(cond_fun, body_fun, carry)
+        return state, stats
+
+
+
+
     def summarize_stats_traj(
             self,
             stats_traj: MalaStats,
