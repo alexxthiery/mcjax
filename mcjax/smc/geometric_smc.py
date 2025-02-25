@@ -63,16 +63,17 @@ class GeometricSMC():
         step_size_arr = jnp.zeros(self.num_substeps)
 
         # use fori_loop to perform multiple substeps
-        carry = (new_particles, key, step_size_arr, acc_rate_arr)
+        carry = (new_particles, key, self.step_size, step_size_arr, acc_rate_arr)
         def body_fun(i, carry):
-            particles, key, step_size_arr, acc_rate_arr = carry
+            particles, key, step_size, step_size_arr, acc_rate_arr = carry
             key, key_ = jr.split(key)
-            new_particles, step_size, acc_rate = mc_function(t, coefs, particles, key_)
+
+            new_particles, step_size, acc_rate = mc_function(t, coefs, particles, key_, step_size, if_adjust_step_size = (i==0))
             step_size_arr = step_size_arr.at[i].set(step_size)
             acc_rate_arr = acc_rate_arr.at[i].set(acc_rate)
-            return (new_particles, key, step_size_arr, acc_rate_arr)
+            return (new_particles, key, step_size, step_size_arr, acc_rate_arr)
         
-        new_particles, _ , step_size_arr, acc_rate_arr = jax.lax.fori_loop(0, self.num_substeps, body_fun, carry)
+        new_particles, _ ,_, step_size_arr, acc_rate_arr = jax.lax.fori_loop(0, self.num_substeps, body_fun, carry)
         return (new_particles, updated_log_weights, step_size_arr, acc_rate_arr)
     
     def resample(self, particles: jnp.ndarray, log_weights: jnp.ndarray, key: jax.Array):
@@ -88,26 +89,42 @@ class GeometricSMC():
         return resampled_particles
     
     # Random walk Metropolis kernel
-    def random_walk_batch(self, t, coefs, particles: jnp.ndarray, key: jax.Array):
+    def random_walk_batch(self, t, coefs, particles, key, step_size, if_adjust_step_size):
         logdensity = LogDensityGeneral(logdensity = lambda x: coefs[t] * self.log_gamma_T.logdensity(x) \
             + (1 - coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
-        rwm = Rwm(logtarget=logdensity, step_size = self.step_size)
+        rwm = Rwm(logtarget=logdensity, step_size=step_size)
         state = RwmState(x=particles, logdensity=logdensity.batch(particles))
-        new_particles,stats = rwm.adaptive_step(state, key)
-        this_step_size = stats.step_size
-        this_acc_rate = stats.acc_rate
-        return new_particles.x, this_step_size, this_acc_rate
+        max_iter = 5
+        args = (state, key, step_size, max_iter)
+
+        # Adaptive step size only at the first temperature
+        new_particles, stats = jax.lax.cond(
+        if_adjust_step_size,
+        rwm.adaptive_step,
+        rwm.step,
+        operand=args
+        )
+        # self.step_size = stats.step_size # update the step size
+        return new_particles.x, stats.step_size, stats.acc_rate
 
     # MALA kernel 
-    def mala_batch(self, t, coefs, particles: jnp.ndarray, key: jax.Array):
+    def mala_batch(self, t, coefs, particles, key, step_size, if_adjust_step_size):
         logdensity = LogDensityGeneral(logdensity = lambda x: coefs[t] * self.log_gamma_T.logdensity(x) \
             + (1 - coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
-        mala = Mala(logtarget=logdensity, step_size = self.step_size)
+        mala = Mala(logtarget=logdensity, step_size = step_size)
         state = MalaState(x=particles, logdensity=logdensity.batch(particles))
-        new_particles,stats = mala.adaptive_step(state, key)
-        this_step_size = stats.step_size
-        this_acc_rate = stats.acc_rate
-        return new_particles.x, this_step_size, this_acc_rate
+        max_iter = 5
+        args = (state, key, step_size, max_iter)
+
+        # Adaptive step size only at the first temperature
+        new_particles, stats = jax.lax.cond(
+        if_adjust_step_size,
+        mala.adaptive_step,
+        mala.step,
+        operand=args
+        )
+        # self.step_size = stats.step_size # update the step size
+        return new_particles.x, stats.step_size, stats.acc_rate
 
     def compute_weights(self, t, coefs, resampled_particle: jnp.ndarray):
         """ Compute the log_weights as the ratio of the target densities """
@@ -135,7 +152,7 @@ class GeometricSMC():
 
         carry = (particles_arr, log_weights_arr, key, step_size_arr, acc_rate_arr)
         def body_fun(t, carry):
-            particles_arr, weights_arr, key, step_size_arr,acc_rate_arr = carry
+            particles_arr, log_weights_arr, key, step_size_arr,acc_rate_arr = carry
             key, key_ = jr.split(key)
             state = self.step(t, self.coefs, mc_method, (particles_arr[:, :, t-1], log_weights_arr[:, t-1]), key)
             particles_arr = particles_arr.at[:, :, t].set(state[0])

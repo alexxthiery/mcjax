@@ -57,14 +57,11 @@ class Mala(MarkovKernel):
         state = MalaState(x=x_init, logdensity=self.logtarget(x_init))
         return state
     
-    def step(self,
-             state:MalaState,
-             key,
-             step_size
-             ) -> Tuple[MalaState,MalaStats]:
+    def step(self,args):
         """
         A single step of MALA sampling
         """
+        state, key, step_size, _ = args 
         # unpack the state and density function
         x = state.x
         logtarget_current = state.logdensity
@@ -112,12 +109,14 @@ class Mala(MarkovKernel):
 
         return state_new, statistics
     
-    def adaptive_step(self, state, key, max_iter=5):
+    def adaptive_step(self, args):
         '''
         Take a step with adaptive step size: reiterate until the acceptance rate is within [0.2,0.5]
         '''
+        state, key, _, max_iter = args
         key, key_ = jr.split(key)
-        state, stats = self.step(state, key_, self.step_size)
+        args = (state, key_, self.step_size,0)
+        state, stats = self.step(args)
 
         def cond_fun(carry):
             state, iter, key, stats = carry
@@ -128,7 +127,8 @@ class Mala(MarkovKernel):
             state, iter, key, stats = carry
             step_size = stats.step_size
             key, key_ = jr.split(key)
-            state_new, stats_new = self.step(state, key_, step_size)
+            args = (state, key_, step_size,0)
+            state_new, stats_new = self.step(args)
             acc_rate = stats_new.acc_rate
             eta = 0.5; acc_target= 0.574
             new_step_size = jnp.exp(jnp.log(step_size) + eta * (acc_rate - acc_target))
