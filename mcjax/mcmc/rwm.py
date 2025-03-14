@@ -83,14 +83,16 @@ class Rwm(MarkovKernel):
     
     def step(self,args):
         """ Perform a single step of the RWM kernel """    
-        state, key, step_size, _ = args            
+        state, key, step_size, _ = args   
+        step_size = jnp.array(step_size, dtype=jnp.float32)         
         # unpack the state and key
         x = state.x
         logtarget_current = state.logdensity
+        empirical_var = jnp.var(x, axis=0)    
         
         # create a proposal
         key, key_ = jr.split(key)
-        x_prop = x + jr.normal(key_, (x.shape)) * step_size
+        x_prop = x + jr.normal(key_, (x.shape)) * step_size * jnp.sqrt(empirical_var)
         logtarget_proposal = self.logtarget.batch(x_prop)
         
         # accept or reject for a batch of samples

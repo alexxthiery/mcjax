@@ -230,13 +230,6 @@ class GeometricSMC():
         carry = jax.lax.while_loop(cond_fun, body_fun, carry)
         t, coefs, particles_arr, log_weights_arr, key, step_size_arr, acc_rate_arr = carry
 
-        # Slice the arrays to only include the iterations performed.
-        # particles_arr = particles_arr[:, :, :t]
-        # log_weights_arr   = log_weights_arr[:, :t]
-        # step_size_arr = step_size_arr[:, :t - 1]
-        # acc_rate_arr  = acc_rate_arr[:, :t - 1]
-        # coefs = coefs[:t]
-
         return t, particles_arr, log_weights_arr, step_size_arr, acc_rate_arr, coefs
 
 

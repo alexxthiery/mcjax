@@ -27,7 +27,7 @@ class NealFunnel(LogDensity):
                 ):
         self.sigma_x = sigma_x
         self._dim = dim
-        self._log_Z = 0.0
+        self._log_Z = dim/2.*jnp.log(2*jnp.pi) + jnp.log(self.sigma_x)
 
     # define the logpdf
     def logdensity(self, x):
@@ -35,7 +35,7 @@ class NealFunnel(LogDensity):
         assert x.shape == (self.dim,), "Invalid dimension"
         x0, x1 = x[0], x[1:]
         std = jnp.exp(x0/2.)
-        return -0.5*(x0/self.sigma_x)**2 - 0.5*jnp.sum(x1/std)**2 - 0.5*(self.dim-1)*jnp.log(std**2)
+        return -0.5*(x0/self.sigma_x)**2 - 0.5*jnp.sum((x1/std)**2) - 0.5*(self.dim-1)*jnp.log(std**2)
 
     def sample(self, key, n_samples):
         # samples x0_s
@@ -47,6 +47,4 @@ class NealFunnel(LogDensity):
         x1_s = stds * jr.normal(key_, (n_samples, self.dim-1))
         return jnp.concatenate([x0_s, x1_s], axis=1)
     
-    def log_Z(self):
-        return 0.0
     

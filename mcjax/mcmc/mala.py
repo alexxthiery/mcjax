@@ -30,8 +30,8 @@ class MalaStats:
     """
     is_accept: jnp.ndarray
     accept_MH: jnp.ndarray
-    step_size: float
-    acc_rate: float
+    step_size: jnp.ndarray
+    acc_rate: jnp.ndarray
     
 
 class Mala(MarkovKernel):
@@ -62,15 +62,22 @@ class Mala(MarkovKernel):
         A single step of MALA sampling
         """
         state, key, step_size, _ = args 
+        step_size = jnp.array(step_size, dtype=jnp.float32)
         # unpack the state and density function
-        x = state.x
+        x = state.x # x: (num_particles, (dim))
         logtarget_current = state.logdensity
 
         # create a proposal
         key, key_ = jr.split(key)
-        # \log(f(x)) \propto -V(x) 
 
-        x_prop = x + step_size*self.logtarget.grad_batch(x) + jr.normal(key_, (x.shape)) *jnp.sqrt(2*self.step_size)
+        # empirical variance in each dimension
+        empirical_var = jnp.var(x, axis=0)       
+        M_inv = 1 / empirical_var  
+
+        # \log(f(x)) \propto -V(x) 
+        x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) \
+         + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size * M_inv)
+
         logtarget_proposal = self.logtarget.batch(x_prop)
         
         # accept or reject
