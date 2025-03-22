@@ -147,8 +147,8 @@ def train(model, key, init_state, dataset, num_steps=1000, num_samples=1000):
     return model, state
 
 model = MLPModel(dim, T)
-num_samples = 1000
-num_steps = 100
+num_samples = 10000
+num_steps = 1000
 
 key = jr.key(0)
 key, key_ = jr.split(key)
