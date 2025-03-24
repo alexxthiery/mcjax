@@ -143,6 +143,8 @@ def train(model, key, init_state, dataset, num_steps=1000, num_samples=1000):
     plt.plot(losslist, label='Loss', color='blue', alpha=0.7)
     plt.title('Loss')
     plt.legend()
+    plt.savefig('loss.png')
+    plt.close()
     
     return model, state
 
@@ -165,6 +167,7 @@ plt.scatter(dataset[:,0], dataset[:,1], marker='.', color='b', label='Original D
 plt.scatter(samples_list[-1][:,0], samples_list[-1][:,1], marker='.', color = 'r', label='Sampled Data')
 plt.legend()
 plt.savefig('denoising.png')
+plt.close()
 
 # Create figure and axis
 fig, ax = plt.subplots()
