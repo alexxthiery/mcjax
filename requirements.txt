@@ -2,4 +2,3 @@ numpy
 jax
 flax
 optax
-matplotlib==3.7.1
