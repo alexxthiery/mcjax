@@ -27,7 +27,7 @@ class IsotropicGauss(LogDensity):
         self.sigma = jnp.exp(0.5*self.log_var)
         self._dim = len(mu)
         logdet = self.dim*self.log_var
-        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*jnp.abs(logdet)
 
     def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma)) 
