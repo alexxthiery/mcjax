@@ -19,6 +19,9 @@ from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.student import Student
 from mcjax.proba.banana2d import Banana2D
 
+print(f"Available devices: {jax.devices()}")
+jax.config.update("jax_platform_name", "gpu")
+
 
 # Functions to calculate the normalizing constant estimator
 def single_run(GSMC:GeometricSMC, num_particles, key, mc_method):
