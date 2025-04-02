@@ -35,7 +35,7 @@ def mult_run(GSMC:GeometricSMC, num_particles, key, mc_method, num_run):
     t_arr, log_weight_batch = batch_run(GSMC,num_particles,keys,mc_method)
     
     logZ_arr = [
-        jnp.sum(logsumexp(log_weight_batch[i, :, 1:] - jnp.log(num_particles), axis=0))
+        jnp.sum(logsumexp(log_weight_batch[i, :, :] - jnp.log(num_particles), axis=0))
         for i, t in enumerate(t_arr)
     ]
 
@@ -53,7 +53,7 @@ def compute_variance(GSMC:GeometricSMC, key, num_particles, method,num_run):
     return mean, variance
 
 key = jr.key(0)
-dim = 20
+dim = 2
 mu_0 = jnp.zeros(dim)
 sigma_0 = 1.
 log_var_0 = jnp.log(sigma_0**2)
@@ -87,7 +87,7 @@ positions = np.arange(len(num_particles_arr))
 plt.boxplot(data1["logZ"], positions=positions, showmeans=True, meanline=True, notch=True, showfliers=False, whiskerprops=dict(color='orange'))
 
 # compare to logZ of funnel distribution
-plt.axhline(y=log_gamma_T._log_Z - log_gamma_0._log_Z, color='r', linestyle='--', label='True logZ')
+plt.axhline(y=log_gamma_T._log_Z, color='r', linestyle='--', label='True logZ')
 
 plt.xticks(positions, num_particles_arr)
 plt.xlabel('Number of particles')
