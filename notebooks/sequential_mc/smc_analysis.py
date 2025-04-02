@@ -35,7 +35,7 @@ def mult_run(GSMC:GeometricSMC, num_particles, key, mc_method, num_run):
     t_arr, log_weight_batch = batch_run(GSMC,num_particles,keys,mc_method)
     
     logZ_arr = [
-        jnp.sum(logsumexp(log_weight_batch[i, :, 1:] - jnp.log(num_particles), axis=0))
+        jnp.sum(logsumexp(log_weight_batch[i, :, 1:] - jnp.log(num_particles), axis=1))
         for i, t in enumerate(t_arr)
     ]
 
