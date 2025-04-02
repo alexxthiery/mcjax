@@ -72,7 +72,7 @@ num_particles_arr = [50, 100, 500, 1000]
 num_run = 200
 N = 10
 coefs = jnp.arange(N+1)/N
-method = "MALA"
+method = "RWM"
 data1 = {"N_arr": num_particles_arr, "logZ": []}
 for num_particles in num_particles_arr:
     GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
