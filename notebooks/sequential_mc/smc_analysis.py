@@ -87,7 +87,7 @@ positions = np.arange(len(num_particles_arr))
 plt.boxplot(data1["logZ"], positions=positions, showmeans=True, meanline=True, notch=True, showfliers=False, whiskerprops=dict(color='orange'))
 
 # compare to logZ of funnel distribution
-plt.axhline(y=log_gamma_T._log_Z, color='r', linestyle='--', label='True logZ')
+plt.axhline(y=log_gamma_T._log_Z - log_gamma_0._log_Z, color='r', linestyle='--', label='True logZ')
 
 plt.xticks(positions, num_particles_arr)
 plt.xlabel('Number of particles')
