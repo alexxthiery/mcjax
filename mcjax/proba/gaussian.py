@@ -36,7 +36,7 @@ class IsotropicGauss(LogDensity):
             self,
             x_batch,   # (B, D): B batch size, D dimension
             ):
-        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1) 
+        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1)  
     
     def grad(self, x):
         return -(x - self.mu) / self.sigma**2
