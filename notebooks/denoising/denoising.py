@@ -31,7 +31,7 @@ batch_size = 256
 # define hyper-parameters 
 beta_start = 0.0001
 beta_end = 0.02
-betas = jnp.linspace(beta_start, beta_end, T)
+betas = beta_start * (beta_end / beta_start) ** (jnp.linspace(0, 1, T))
 alphas = 1 - betas
 alpha_bars = jnp.cumprod(alphas)
 
