@@ -53,19 +53,19 @@ def compute_variance(GSMC:GeometricSMC, key, num_particles, method,num_run):
     return mean, variance
 
 key = jr.key(0)
-dim = 10
+dim = 100
 mu_0 = jnp.zeros(dim)
 sigma_0 = 1.
 log_var_0 = jnp.log(sigma_0**2)
 log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 
 
-# mu_1 = jnp.ones(dim)
-# sigma_1 = 0.3
-# log_var_1 = jnp.log(sigma_1**2)
-# log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
+mu_1 = jnp.ones(dim)
+sigma_1 = 0.3
+log_var_1 = jnp.log(sigma_1**2)
+log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
 
-log_gamma_T = NealFunnel(dim=dim)
+# log_gamma_T = NealFunnel(dim=dim)
 # log_gamma_T = Banana2D()
 
 num_particles_arr = [50, 100, 500, 1000, 2000,10000,20000,50000]
