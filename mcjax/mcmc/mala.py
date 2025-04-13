@@ -39,11 +39,14 @@ class Mala(MarkovKernel):
     def __init__(self,
                  *,
                  logtarget:LogDensity,
-                 step_size: float
+                 step_size: float,
+                 mass_inv: jnp.ndarray = None
                  ):
         self.logtarget = logtarget
         self._dim = logtarget.dim
         self.step_size = step_size
+        self.mass_inv = mass_inv
+         
         
 
     def init_state(
@@ -70,14 +73,16 @@ class Mala(MarkovKernel):
         # create a proposal
         key, key_ = jr.split(key)
 
-        # empirical variance in each dimension
-        # empirical_var = jnp.var(x, axis=0)       
-        # M_inv = 1 / empirical_var  
+        if self.mass_inv is None:
+            empirical_var = jnp.var(x, axis=0)
+            M_inv = 1.0 / (empirical_var + 1e-8)
+        else:
+            M_inv = self.mass_inv
+        sqrt_M_inv = jnp.sqrt(M_inv)
 
         # \log(f(x)) \propto -V(x) 
-        # x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) \
-        #  + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size * M_inv)
-        x_prop = x + step_size * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size)
+        x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size) * sqrt_M_inv
+        # x_prop = x + step_size * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size)
 
         logtarget_proposal = self.logtarget.batch(x_prop)
         

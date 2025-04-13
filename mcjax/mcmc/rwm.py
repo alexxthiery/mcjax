@@ -88,12 +88,12 @@ class Rwm(MarkovKernel):
         # unpack the state and key
         x = state.x
         logtarget_current = state.logdensity
-        # empirical_var = jnp.var(x, axis=0)    
+        empirical_var = jnp.var(x, axis=0)    
         
         # create a proposal
         key, key_ = jr.split(key)
-        # x_prop = x + jr.normal(key_, (x.shape)) * step_size * jnp.sqrt(empirical_var)
-        x_prop = x + jr.normal(key_, (x.shape)) * step_size
+        x_prop = x + jr.normal(key_, (x.shape)) * step_size * jnp.sqrt(empirical_var)
+        # x_prop = x + jr.normal(key_, (x.shape)) * step_size
         logtarget_proposal = self.logtarget.batch(x_prop)
         
         # accept or reject for a batch of samples
