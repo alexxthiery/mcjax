@@ -71,12 +71,13 @@ class Mala(MarkovKernel):
         key, key_ = jr.split(key)
 
         # empirical variance in each dimension
-        empirical_var = jnp.var(x, axis=0)       
-        M_inv = 1 / empirical_var  
+        # empirical_var = jnp.var(x, axis=0)       
+        # M_inv = 1 / empirical_var  
 
         # \log(f(x)) \propto -V(x) 
-        x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) \
-         + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size * M_inv)
+        # x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) \
+        #  + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size * M_inv)
+        x_prop = x + step_size * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size)
 
         logtarget_proposal = self.logtarget.batch(x_prop)
         

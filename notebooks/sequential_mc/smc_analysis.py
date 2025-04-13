@@ -53,7 +53,7 @@ def compute_variance(GSMC:GeometricSMC, key, num_particles, method,num_run):
     return mean, variance
 
 key = jr.key(0)
-dim = 2
+dim = 10
 mu_0 = jnp.zeros(dim)
 sigma_0 = 1.
 log_var_0 = jnp.log(sigma_0**2)
