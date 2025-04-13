@@ -68,7 +68,7 @@ log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
 # log_gamma_T = NealFunnel(dim=dim)
 # log_gamma_T = Banana2D()
 
-num_particles_arr = [50, 100, 500, 1000, 2000,10000,20000,50000]
+num_particles_arr = [50, 100, 500, 1000, 2000,10000,20000,40000]
 num_run = 200
 N = 10
 coefs = jnp.arange(N+1)/N
