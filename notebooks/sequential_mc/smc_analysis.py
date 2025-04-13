@@ -60,19 +60,19 @@ log_var_0 = jnp.log(sigma_0**2)
 log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 
 
-mu_1 = jnp.ones(dim)
-sigma_1 = 0.3
-log_var_1 = jnp.log(sigma_1**2)
-log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
+# mu_1 = jnp.ones(dim)
+# sigma_1 = 0.3
+# log_var_1 = jnp.log(sigma_1**2)
+# log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
 
-# log_gamma_T = NealFunnel()
+log_gamma_T = NealFunnel()
 # log_gamma_T = Banana2D()
 
 num_particles_arr = [50, 100, 500, 1000, 2000]
 num_run = 200
 N = 10
 coefs = jnp.arange(N+1)/N
-method = "MALA"
+method = "RWM"
 data1 = {"N_arr": num_particles_arr, "logZ": []}
 for num_particles in num_particles_arr:
     GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
