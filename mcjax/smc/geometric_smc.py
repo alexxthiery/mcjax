@@ -26,13 +26,15 @@ class GeometricSMC():
             log_gamma_T:LogDensity,
             coefs,
             step_size,
-            num_substeps):
+            num_substeps,
+            keep_particles = False):
         
         self.coefs = coefs
         self.log_gamma_0 = log_gamma_0
         self.log_gamma_T = log_gamma_T
         self.step_size = step_size
         self.num_substeps = num_substeps # number of substeps for the MC kernel
+        self.keep_particles = keep_particles # if True, keep all particles in the SMC chain, otherwise only keep the last one
 
     def step(
             self,
@@ -160,8 +162,11 @@ class GeometricSMC():
         initial_weights = jnp.zeros(num_particles)
         state = {"particles": initial_particles, "weights": initial_weights}
         # use fori_loop
-        particles_arr = jnp.zeros((num_particles, self.log_gamma_0.dim, len(self.coefs)))
-        particles_arr = particles_arr.at[:, :, 0].set(initial_particles)
+        if self.keep_particles:
+            particles_arr = jnp.zeros((num_particles, self.log_gamma_0.dim, len(self.coefs)))
+            particles_arr = particles_arr.at[:, :, 0].set(initial_particles)
+        else:
+            particles_arr = initial_particles
         log_weights_arr = jnp.zeros((num_particles, len(self.coefs)))
         log_weights_arr = log_weights_arr.at[:, 0].set(initial_weights)
         step_size_arr = jnp.zeros((self.num_substeps, len(self.coefs)-1))
@@ -171,8 +176,14 @@ class GeometricSMC():
         def body_fun(t, carry):
             particles_arr, log_weights_arr, key, step_size_arr,acc_rate_arr = carry
             key, key_ = jr.split(key)
-            state = self.step(t, self.coefs, mc_method, (particles_arr[:, :, t-1], log_weights_arr[:, t-1]), key)
-            particles_arr = particles_arr.at[:, :, t].set(state[0])
+            prev_particles = (particles_arr[:, :, t-1]
+                      if self.keep_particles
+                      else particles_arr)
+            state = self.step(t, self.coefs, mc_method, (prev_particles, log_weights_arr[:, t-1]), key)
+            if self.keep_particles:
+                particles_arr = particles_arr.at[:, :, t].set(state[0])
+            else:
+                particles_arr = state[0]
             log_weights_arr = log_weights_arr.at[:, t].set(state[1])
             step_size_arr = step_size_arr.at[:, t-1].set(state[2])
             acc_rate_arr = acc_rate_arr.at[:, t-1].set(state[3])
@@ -192,14 +203,17 @@ class GeometricSMC():
         num_substeps = self.num_substeps
 
         # Preallocate arrays for up to max_steps iterations.
-        particles_arr = jnp.zeros((num_particles, dim, max_steps+1))
+        if self.keep_particles:
+            particles_arr = jnp.zeros((num_particles, self.log_gamma_0.dim, len(self.coefs)))
+            particles_arr = particles_arr.at[:, :, 0].set(initial_particles)
+        else:
+            particles_arr = initial_particles
         log_weights_arr  = jnp.zeros((num_particles, max_steps+1))
         step_size_arr = jnp.zeros((num_substeps, max_steps))
         acc_rate_arr  = jnp.zeros((num_substeps, max_steps))
         coefs         = jnp.zeros((max_steps+1,))
         
         # Set initial values.
-        particles_arr = particles_arr.at[:, :, 0].set(initial_particles)
         log_weights_arr   = log_weights_arr.at[:, 0].set(initial_weights)
         coefs         = coefs.at[0].set(0.0)
 
@@ -215,7 +229,9 @@ class GeometricSMC():
             t, coefs, particles_arr, log_weights_arr, key, step_size_arr, acc_rate_arr = carry
             key, key_ = jr.split(key)
             # Retrieve previous step's particles and weights.
-            prev_particles = particles_arr[:, :, t - 1]
+            prev_particles = (particles_arr[:, :, t-1]
+                      if self.keep_particles
+                      else particles_arr)
             prev_log_weights   = log_weights_arr[:, t - 1] # no need for log-weights, step_size and acc_rate in update_coef
             step_size = step_size_arr[:, t - 1] 
             acc_rate = acc_rate_arr[:, t - 1]   
@@ -237,7 +253,10 @@ class GeometricSMC():
             new_particles, new_log_weights, step_size, acc_rate = state
 
             # Update preallocated arrays at the current iteration index.
-            particles_arr = particles_arr.at[:, :, t].set(new_particles)
+            if self.keep_particles:
+                particles_arr = particles_arr.at[:, :, t].set(new_particles)
+            else:
+                particles_arr = new_particles
             log_weights_arr   = log_weights_arr.at[:, t].set(new_log_weights)
             step_size_arr = step_size_arr.at[:, t - 1].set(step_size)
             acc_rate_arr  = acc_rate_arr.at[:, t - 1].set(acc_rate)

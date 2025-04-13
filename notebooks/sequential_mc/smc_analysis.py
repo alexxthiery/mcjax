@@ -76,7 +76,7 @@ method = "RWM"
 data1 = {"N_arr": num_particles_arr, "logZ": []}
 for num_particles in num_particles_arr:
     GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
-                    step_size=1, num_substeps=10)
+                    step_size=1., num_substeps=10, keep_particles=False)
     print("Running with num_particles: ", num_particles)
     key, key_ = jr.split(key)
     logZ_arr = mult_run(GSMC, num_particles=num_particles, key=key_, mc_method=method, num_run = num_run)
