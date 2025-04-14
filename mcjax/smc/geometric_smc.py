@@ -114,16 +114,17 @@ class GeometricSMC():
         logdensity = LogDensityGeneral(logdensity = lambda x: coefs[t] * self.log_gamma_T.logdensity(x) \
             + (1 - coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
         # Pilot RWM chain to estimate per-coordinate variances at π_t
-        pilot_steps = 20
-        rwm = Rwm(logtarget=logdensity, step_size=step_size)
-        state_rwm = RwmState(x=particles, logdensity=logdensity.batch(particles))
-        key_pilot = key
-        for _ in range(pilot_steps):
-            state_rwm, _ = rwm.step((state_rwm, key_pilot, step_size, 0))
-            key_pilot, _ = jr.split(key_pilot)
-        pilot_samples = state_rwm.x
-        var_pilot = jnp.var(pilot_samples, axis=0) + 1e-8
-        mass_inv = 1.0 / var_pilot    
+        # pilot_steps = 20
+        # rwm = Rwm(logtarget=logdensity, step_size=step_size)
+        # state_rwm = RwmState(x=particles, logdensity=logdensity.batch(particles))
+        # key_pilot = key
+        # for _ in range(pilot_steps):
+        #     state_rwm, _ = rwm.step((state_rwm, key_pilot, step_size, 0))
+        #     key_pilot, _ = jr.split(key_pilot)
+        # pilot_samples = state_rwm.x
+        # var_pilot = jnp.var(pilot_samples, axis=0) + 1e-8
+        # mass_inv = 1.0 / var_pilot    
+        mass_inv = None
 
         # Create MALA with that frozen mass matrix
         mala = Mala(

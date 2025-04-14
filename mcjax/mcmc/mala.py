@@ -81,8 +81,8 @@ class Mala(MarkovKernel):
         sqrt_M_inv = jnp.sqrt(M_inv)
 
         # \log(f(x)) \propto -V(x) 
-        x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size) * sqrt_M_inv
-        # x_prop = x + step_size * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size)
+        # x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size) * sqrt_M_inv
+        x_prop = x + step_size * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size)
 
         logtarget_proposal = self.logtarget.batch(x_prop)
         
