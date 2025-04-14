@@ -114,7 +114,7 @@ class GeometricSMC():
         logdensity = LogDensityGeneral(logdensity = lambda x: coefs[t] * self.log_gamma_T.logdensity(x) \
             + (1 - coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
         # Pilot RWM chain to estimate per-coordinate variances at π_t
-        pilot_steps = 50
+        pilot_steps = 20
         rwm = Rwm(logtarget=logdensity, step_size=step_size)
         state_rwm = RwmState(x=particles, logdensity=logdensity.batch(particles))
         key_pilot = key

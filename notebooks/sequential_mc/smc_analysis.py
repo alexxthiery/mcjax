@@ -74,7 +74,7 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     plt.ylabel('logZ')
     plt.title(f'Boxplot of logZ with respect to number of particles ({method})')
     plt.legend()
-    plt.savefig(f'logZ_{target}_DIM={dim}_{method}.png')
+    plt.savefig(f'pics/logZ_{target}_DIM={dim}_{method}.png')
     plt.close()
 
 
@@ -95,8 +95,8 @@ mu_1 = jnp.ones(dim)
 sigma_1 = 0.3
 log_var_1 = jnp.log(sigma_1**2)
 log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
-key, key_ = jr.split(key)
-smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
+# key, key_ = jr.split(key)
+# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
 key, key_ = jr.split(key)
 smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
 
