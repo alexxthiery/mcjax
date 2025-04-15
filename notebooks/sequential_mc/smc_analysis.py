@@ -58,7 +58,7 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     data1 = {"N_arr": num_particles_arr, "logZ": []}
     for num_particles in num_particles_arr:
         GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
-                        step_size=1., num_substeps=jnp.max(10, dim/2), keep_particles=False)
+                        step_size=1., num_substeps=jnp.max(jnp.array([10, dim//2])), keep_particles=False)
         print("Running with num_particles: ", num_particles)
         logZ_arr = mult_run(GSMC, num_particles=num_particles, key=key, mc_method=method, num_run = num_run)
         data1["logZ"].append(logZ_arr)
