@@ -10,6 +10,7 @@ import time
 from scipy.special import logsumexp
 
 # add ../mcjax to the path
+import os
 import sys
 sys.path.append('../../')
 
@@ -57,7 +58,7 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     data1 = {"N_arr": num_particles_arr, "logZ": []}
     for num_particles in num_particles_arr:
         GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
-                        step_size=1., num_substeps=10, keep_particles=False)
+                        step_size=1., num_substeps=jnp.max(10, dim/2), keep_particles=False)
         print("Running with num_particles: ", num_particles)
         logZ_arr = mult_run(GSMC, num_particles=num_particles, key=key, mc_method=method, num_run = num_run)
         data1["logZ"].append(logZ_arr)
@@ -74,6 +75,9 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     plt.ylabel('logZ')
     plt.title(f'Boxplot of logZ with respect to number of particles ({method})')
     plt.legend()
+    # create the directory if it does not exist
+    if not os.path.exists('pics'):
+        os.makedirs('pics')
     plt.savefig(f'pics/logZ_{target}_DIM={dim}_{method}.png')
     plt.close()
 
@@ -85,101 +89,101 @@ N = 10
 coefs = jnp.arange(N+1)/N
 
 # --------------------------- Test With Gaussian target ---------------------------
-# dim = 2
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+dim = 2
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 
-# mu_1 = jnp.ones(dim)
-# sigma_1 = 0.3
-# log_var_1 = jnp.log(sigma_1**2)
-# log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
+mu_1 = jnp.ones(dim)
+sigma_1 = 0.3
+log_var_1 = jnp.log(sigma_1**2)
+log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
 
-# dim = 10
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+dim = 10
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 
-# mu_1 = jnp.ones(dim)
-# sigma_1 = 0.3
-# log_var_1 = jnp.log(sigma_1**2)
-# log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
+mu_1 = jnp.ones(dim)
+sigma_1 = 0.3
+log_var_1 = jnp.log(sigma_1**2)
+log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
 
-# dim = 50
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+dim = 50
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 
-# mu_1 = jnp.ones(dim)
-# sigma_1 = 0.3
-# log_var_1 = jnp.log(sigma_1**2)
-# log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
+mu_1 = jnp.ones(dim)
+sigma_1 = 0.3
+log_var_1 = jnp.log(sigma_1**2)
+log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
 
-# dim = 100
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+dim = 100
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 
-# mu_1 = jnp.ones(dim)
-# sigma_1 = 0.3
-# log_var_1 = jnp.log(sigma_1**2)
-# log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
+mu_1 = jnp.ones(dim)
+sigma_1 = 0.3
+log_var_1 = jnp.log(sigma_1**2)
+log_gamma_T = IsotropicGauss(mu=mu_1, log_var=log_var_1)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Gaussian')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
 
-# # --------------------------- Test With Funnel target ---------------------------
-# dim = 2
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-# log_gamma_T = NealFunnel(dim=dim)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
+# --------------------------- Test With Funnel target ---------------------------
+dim = 2
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+log_gamma_T = NealFunnel(dim=dim)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
-# dim = 10
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-# log_gamma_T = NealFunnel(dim=dim)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
+dim = 10
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+log_gamma_T = NealFunnel(dim=dim)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
-# dim = 50
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-# log_gamma_T = NealFunnel(dim=dim)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
+dim = 50
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+log_gamma_T = NealFunnel(dim=dim)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
-dim = 1000
+dim = 100
 mu_0 = jnp.zeros(dim)
 sigma_0 = 1.
 log_var_0 = jnp.log(sigma_0**2)
