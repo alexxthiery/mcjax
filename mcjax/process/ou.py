@@ -46,7 +46,7 @@ class OU:
             y, key = carry
             key, key_ = jr.split(key)
             eps = jr.normal(key_, shape=(N, self.init_dist.dim))
-            y = self.sqrt_1m_alpha[k] * y + self.sigma * self.sqrt_alpha[k] * eps
+            y = self.sqrt_1m_alpha[i] * y + self.sigma * self.sqrt_alpha[i] * eps
             return (y, key)
 
         # sample y_0
@@ -56,33 +56,14 @@ class OU:
         (y_k, _ ) = jax.lax.fori_loop(0, k, body, (y0, key))
         return y_k
 
-    @partial(jax.jit, static_argnums=(0, 2, 4))
-    def score_sample(self,
-                       key: jr.PRNGKey,
-                       N: int,
-                       k: int,
-                       score_fn,
-                       params) -> jnp.ndarray:
-        """
-        One-step reverse sampler at step k given a score network.
-        
-        Reverse-SDE discretization:
-          y_{k} = sqrt(1-alpha_k) * y_{k+1}
-                  + 2sigma^2(1 - sqrt(1-alpha_k)) * score_fn(k, y_{k+1})
-                  + sigma * sqrt(alpha_k) * eps
-        """
-        # first sample y_{k+1} from the forward marginal
-        key, key_ = jr.split(key)
-        y_next = self.sample(key_, N, k+1)
-
-        # now step backwards
+    @partial(jax.jit, static_argnums=(0,4))
+    def reverse_step(self, key, y_next, k, score_fn, params):
+        # now y_next is the actual next state from the reverse chain
         key, key_ = jr.split(key)
         eps = jr.normal(key_, shape=y_next.shape)
-        drift = 2 * (self.sigma**2) * (1 - self.sqrt_1m_alpha[k]) * score_fn(params, k, y_next)
-        y_k = (
-            self.sqrt_1m_alpha[k] * y_next
-            + drift
-            + self.sigma * self.sqrt_alpha[k] * eps
-        )
-        return y_k
-    
+        drift = 2 * self.sigma**2 * (1 - self.sqrt_1m_alpha[self.K - k - 1]) *\
+          score_fn(params, self.K - k - 1, y_next)
+        y_k = (self.sqrt_1m_alpha[self.K - k - 1] * y_next
+              + drift
+              + self.sigma * self.sqrt_alpha[self.K - k - 1] * eps)
+        return key, y_k

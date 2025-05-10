@@ -15,7 +15,7 @@ sys.path.append('../../')
 
 from mcjax.proba.density import LogDensity
 from mcjax.process.ou import OU
-from mcjax.proba.gaussian import IsotropicGauss
+from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss
 
 print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
@@ -82,7 +82,7 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
         sqrt1m    = ou.sqrt_1m_alpha[ou.K - 1 - k]
         lambda_Kmk = 1.0 - sqrt1m
 
-        s = score_fn(params, k, y_k)
+        s = score_fn(params, ou.K - 1 - k, y_k)
         y_next = sqrt1m * y_k \
                + 2.0 * (ou.sigma**2) * lambda_Kmk * s \
                + ou.sigma * jnp.sqrt(alpha_Kmk) * eps
@@ -132,15 +132,14 @@ def generate_samples(params, score_fn, ou, num_samples, key):
 
     def body(carry, k):
         y_next, key = carry
-        key, key_ = jr.split(key)
-        y_k = ou.score_sample(key_, num_samples, k, score_fn, params)
+        key, y_k = ou.reverse_step(key, y_next, k, score_fn, params)
         return (y_k, key), y_k
 
     # scan backwards
-    (_, _), y_sequence = jax.lax.scan(
+    (y_k, key), y_sequence = jax.lax.scan(
         body,
         (y_K, key),
-        jnp.arange(ou.K - 1, -1, -1)
+        jnp.arange(ou.K)
     )
 
     # y_sequence[0] = y_{K-1}, …, y_sequence[K-1] = y_0
@@ -149,24 +148,31 @@ def generate_samples(params, score_fn, ou, num_samples, key):
 
 
 if __name__ == "__main__":
-    K = 10000
-    sigma = 1.0
+    K = 1000
+    ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 20000
+    num_steps = 2000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
     beta_start, beta_end = 0.1, 20.0
     beta = beta_start + (beta_end - beta_start) * (timesteps / (K - 1))
     alpha = 1.0 - jnp.exp(-2.0 * beta / K)
-    
-    # Model Initialization
+
+    # Define the initial distribution of reference process
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     # target distribution is a mixture of 2 gaussians
-    target_dist = IsotropicGauss(mu=jnp.ones(data_dim), log_var=1.0)
-    ou = OU(alpha=alpha, sigma=sigma, init_dist=init_dist)
+    mu = jnp.array([[0.],[2.]])
+    dist_sigma = jnp.array([1., 2.])
+    log_var = jnp.log(dist_sigma**2)
+    weights = jnp.array([0.2, 0.8])
+    target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+
+    # Define the dynamic of the process
+    ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
+    # Define the network
     model = MLPModel(dim=1, T=K)
 
     # network initialization
@@ -195,7 +201,7 @@ if __name__ == "__main__":
         state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size)
             # every 100 steps, print step and current loss
         def do_print(_):
-            jax.debug.print("At step {s}, loss = {l:.4f}", s=step, l=loss)
+            jax.debug.print("At step {}, loss = {}", step, loss)
             return None
 
         # branch on (step % 100 == 0)
@@ -245,3 +251,12 @@ if __name__ == "__main__":
     plt.title('Generated Samples vs Target Distribution')
     plt.legend()
     plt.savefig('generated_samples.png')
+
+    # Draw the trajectory of one sample
+    plt.figure(figsize=(8, 4))
+    plt.plot(jnp.arange(K, 0, -1), y_seq[:, 0], label='Sample Trajectory')
+    plt.xlabel('Time Step')
+    plt.ylabel('Sample Trajectory')
+    plt.title('Sample Trajectory Over Time')
+    plt.legend()
+    plt.savefig('sample_trajectory.png')

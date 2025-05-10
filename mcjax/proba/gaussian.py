@@ -1,7 +1,9 @@
 from .density import LogDensity
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import mcjax.util.psd as psd
+from jax.scipy.special import logsumexp
 
 
 # ==================================
@@ -9,6 +11,7 @@ import mcjax.util.psd as psd
 # The covariance matrix is a scalar multiple of the identity matrix
 # ==================================
 class IsotropicGauss(LogDensity):
+
     """ Isotropic Gaussian Distribution:
     The covariance matrix is a scalar multiple of the identity matrix
      mu: mean vector
@@ -52,6 +55,97 @@ class IsotropicGauss(LogDensity):
     def log_Z(self):
         """ log partition function """
         return -0.5 * self.dim * jnp.log(2 * jnp.pi) - self.dim*jnp.log(self.sigma)
+
+
+# ==================================
+# Mixed Isotropic Gaussian Distribution
+# ===============================
+class MixedIsotropicGauss(LogDensity):
+    '''
+    Mixed Isotropic Gaussian Distribution p(x) = sum_i p_i N(x|mu_i, sigma_i^2)
+    mu: vector of mean vector
+    log_var: vector of log variance
+    '''
+    def __init__(
+                self,
+                mu,         # mean vector [num_components, D]
+                log_var,    # log variance (scalar) [num_components]
+                weights  # weights of each component [num_components]
+                ):
+        # make sure that sigma is a scalar
+        assert jnp.ndim(log_var) == 1
+        # make sure that number of components is the same
+        assert mu.shape[0] == log_var.shape[0]
+        assert mu.shape[0] == len(weights)
+        # make sure that weights sum to 1
+        assert jnp.isclose(jnp.sum(weights), 1.0)
+        self.mu = mu
+        self.log_var = log_var
+        self.log_w = jnp.log(weights)
+        self.num_components = mu.shape[0]
+        self.sigma = jnp.exp(0.5*self.log_var)
+        self._dim = mu.shape[1]
+
+    def logdensity(self, x):
+        '''
+        Compute log p(x) for an additive mixture of K isotropic Gaussians.
+        x: array of shape (D)
+        return scaar log p(xx)
+        '''
+
+        def comp_logprob(mu_i, log_var_i, log_w_i):
+            sigma_i = jnp.exp(0.5*log_var_i)
+            logdet_i = self.dim*log_var_i
+            _log_Z_i = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet_i
+            return log_w_i -0.5 * jnp.sum(jnp.square((x - mu_i[None, :]) / sigma_i)) - _log_Z_i
+        
+        all_logps = jax.vmap(
+            comp_logprob,
+            in_axes=(0, 0, 0)
+        )(self.mu, self.log_var,self.log_w)
+
+        return logsumexp(all_logps, axis=0)
+
+    def batch(self, 
+              x_batch # (B, D): B batch size, D dimension
+              ):
+        return jax.vmap(self.logdensity, in_axes=(0,))(x_batch)
+    
+    def grad(self, x):
+        def comp_grad(mu_i, log_var_i, log_w_i):
+            sigma_i = jnp.exp(0.5*log_var_i)
+            w_i = jnp.exp(log_w_i)
+            return w_i * (x - mu_i[None, :]) / sigma_i**2
+
+        all_grads = jax.vmap(
+            comp_grad,
+            in_axes=(0, 0, 0)
+        )(self.mu, self.log_var,self.log_w)
+
+        return jnp.sum(all_grads, axis=0)
+    
+    def grad_batch(self, x_batch):
+        return jax.vmap(self.grad, in_axes=(0,))(x_batch)
+    
+    def sample(self, key, n_samples):
+        key, key_ = jr.split(key)
+        weights = jnp.exp(self.log_w)
+        # draw component indices
+        z = jax.random.choice(
+            key_,
+            a=self.num_components,
+            shape=(n_samples,),
+            p=weights
+        )
+        mu_z    = self.mu[z]             
+        sigma_z = jnp.exp(0.5 * self.log_var[z])  
+
+        key, key_ = jr.split(key)
+        eps = jr.normal(key_, shape=(n_samples, self.dim))
+
+        x = mu_z + sigma_z[:, None] * eps
+        return x
+
 
 
 # ==================================
