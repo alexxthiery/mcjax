@@ -1,12 +1,13 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from typing import NamedTuple
 from flax.training import train_state
 import optax
 import flax.linen as nn
 import matplotlib.pyplot as plt
 from functools import partial
+from scipy.stats import gaussian_kde
+from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
 import pickle
 import os
@@ -89,7 +90,7 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
                + 2.0 * (ou.sigma**2) * lambda_Kmk * s \
                + ou.sigma * jnp.sqrt(alpha_Kmk) * eps
 
-        r_next = r_k + (2.0 * ou.sigma**2) * (lambda_Kmk / alpha_Kmk) * jnp.sum(s**2, axis=-1)
+        r_next = r_k + (2.0 * ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
         return (y_next, r_next, key), None
 
     r_0 = jnp.zeros(batch_size)
@@ -150,7 +151,7 @@ def generate_samples(params, score_fn, ou, num_samples, key):
 
 
 if __name__ == "__main__":
-    if_train = True
+    if_train = False
     model_path = 'model_params.pkl'
     K = 1000
     ou_sigma = 1.0
@@ -256,23 +257,69 @@ if __name__ == "__main__":
     )
 
     y_seq = jax.device_get(y_seq)
-    dataset = target_dist.sample(key_, 10000)
+    
 
     # plot the last distribution of y_seq against dataset
-    plt.figure(figsize=(8, 4))
-    plt.hist(dataset, bins=30, density=True, alpha=0.5, label='Target Distribution')
-    plt.hist(y_seq[-1], bins=30, density=True, alpha=0.5, label='Final Samples')
-    plt.hist(y_seq[0], bins=30, density=True, alpha=0.5, label='Initial Samples')
-    plt.hist(y_seq[K//2], bins=30, density=True, alpha=0.5, label='Middle Samples')
-    plt.title('Generated Samples vs Target Distribution')
-    plt.legend()
-    plt.savefig('generated_samples.png')
+    # dataset = target_dist.sample(key_, 10000)
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(dataset, bins=30, density=True, alpha=0.5, label='Target Distribution')
+    # plt.hist(y_seq[-1], bins=30, density=True, alpha=0.5, label='Final Samples')
+    # plt.hist(y_seq[0], bins=30, density=True, alpha=0.5, label='Initial Samples')
+    # plt.hist(y_seq[K//2], bins=30, density=True, alpha=0.5, label='Middle Samples')
+    # plt.title('Generated Samples vs Target Distribution')
+    # plt.legend()
+    # plt.savefig('generated_samples.png')
 
-    # Draw the trajectory of one sample
-    plt.figure(figsize=(8, 4))
-    plt.plot(jnp.arange(K, 0, -1), y_seq[:, 0], label='Sample Trajectory')
-    plt.xlabel('Time Step')
-    plt.ylabel('Sample Trajectory')
-    plt.title('Sample Trajectory Over Time')
-    plt.legend()
-    plt.savefig('sample_trajectory.png')
+    # Modify the animation code section
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Generate reference distributions and KDEs
+    x = jnp.linspace(-7, 10, 1000)
+    initial_kde = gaussian_kde(init_dist.sample(jr.PRNGKey(0), 100000).flatten())
+    target_kde = gaussian_kde(target_dist.sample(jr.PRNGKey(0), 100000).flatten())
+
+    # Precompute sample KDEs for all frames
+    kde_x = jnp.linspace(-7, 10, 500)
+    frame_densities = []
+    for frame in range(K):
+        current_samples = y_seq[frame].flatten()
+        kde = gaussian_kde(current_samples)
+        frame_densities.append(kde(kde_x))
+
+    # Create static reference lines
+    ax.plot(kde_x, initial_kde(kde_x), 'b--', linewidth=2, label='Initial Distribution')
+    ax.plot(kde_x, target_kde(kde_x), 'g--', linewidth=2, label='Target Distribution')
+
+    # Initialize animated elements
+    line, = ax.plot([], [], 'r-', linewidth=2, label='Current Samples')
+    time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
+    ax.set_xlim(-7, 10)
+    ax.set_ylim(0, 0.5)
+    ax.set_xlabel('Value')
+    ax.set_ylabel('Density')
+    ax.set_title('Density Evolution During Reverse Process')
+    ax.legend(loc='upper right')
+
+    def animate(frame):
+        # Update line data
+        line.set_data(kde_x, frame_densities[frame])
+        
+        # Update time text
+        time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
+        
+        return line, time_text
+
+    # Create animation
+    ani = animation.FuncAnimation(
+        fig=fig,
+        func=animate,
+        frames=K,
+        interval=20,
+        blit=True
+    )
+
+    # Save animation
+    writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
+    ani.save('density_evolution.mp4', writer=writer)
+
+    plt.close()
