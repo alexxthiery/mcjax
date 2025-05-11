@@ -8,6 +8,8 @@ import flax.linen as nn
 import matplotlib.pyplot as plt
 from functools import partial
 import matplotlib.animation as animation
+import pickle
+import os
 
 import sys
 sys.path.append('../../')
@@ -148,6 +150,8 @@ def generate_samples(params, score_fn, ou, num_samples, key):
 
 
 if __name__ == "__main__":
+    if_train = True
+    model_path = 'model_params.pkl'
     K = 1000
     ou_sigma = 1.0
     learning_rate = 1e-4
@@ -218,21 +222,33 @@ if __name__ == "__main__":
 
 
     # Training loop
-    key, key_ = jr.split(key)
-    state, key, losses = run_training(state, key_)
+    if if_train:
+        key, key_ = jr.split(key)
+        state, key, losses = run_training(state, key_)
 
+        # Plot the loss curve
+        plt.plot(losses)
+        plt.xlabel('Step')
+        plt.ylabel('Loss')
+        plt.title('Loss Curve')
+        plt.savefig('loss_curve.png')
 
-    # Plot the loss curve
-    plt.plot(losses)
-    plt.xlabel('Step')
-    plt.ylabel('Loss')
-    plt.title('Loss Curve')
-    plt.savefig('loss_curve.png')
+        # Save the model parameters
+        params = state.params
+        with open(model_path, 'wb') as f:
+            pickle.dump(params, f)
+
+    else:
+        # Load the model parameters
+        assert os.path.exists(model_path), "Model path not found"
+        with open(model_path, 'rb') as f:
+            params = pickle.load(f)
+        
 
     # Sample the target process
     key, key_ = jr.split(key) 
     y_seq = generate_samples(
-        state.params,
+        params,
         score_fn,
         ou,
         num_samples=10000,
