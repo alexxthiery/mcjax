@@ -71,7 +71,7 @@ class MLPModel(nn.Module):
     
 
 def dds_loss(params, key, ou: OU, init_dist: LogDensity,
-             target_dist: LogDensity, score_fn, batch_size: int):
+             target_dist: LogDensity, score_fn, batch_size: int, add_score: bool):
     # sample y_0
     key, key_ = jr.split(key)
     y_0 = init_dist.sample(key_, batch_size)
@@ -91,7 +91,14 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
                + 2.0 * (ou.sigma**2) * lambda_Kmk * s \
                + ou.sigma * jnp.sqrt(alpha_Kmk) * eps
 
-        r_next = r_k + (2.0 * ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
+        
+        main_term = (2.0 * ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
+        zero_exp_term = jnp.sum(s * eps, axis=-1)
+        r_next = r_k + jax.lax.cond(
+            add_score,
+            lambda: main_term + zero_exp_term,
+            lambda: main_term,
+        )
         return (y_next, r_next, key), None
 
     r_0 = jnp.zeros(batch_size)
@@ -108,17 +115,17 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
 # compute (loss, grads)
 loss_and_grad = jax.jit(
     jax.value_and_grad(dds_loss, argnums=0),
-    static_argnums=(2, 3, 4, 5, 6))
+    static_argnums=(2, 3, 4, 5, 6, 7))
 
-@partial(jax.jit, static_argnums=(2,3,4,5,6))
+@partial(jax.jit, static_argnums=(2,3,4,5,6,7))
 def train_step(state, key,
                ou, init_dist, target_dist,
-               score_fn, batch_size):
+               score_fn, batch_size, add_score):
     
     loss, grads = loss_and_grad(
         state.params, key,
         ou, init_dist, target_dist,
-        score_fn, batch_size
+        score_fn, batch_size, add_score
     )
 
     # apply gradients & increment step
@@ -213,20 +220,20 @@ if __name__ == "__main__":
     parser.add_argument('--if_train', type=str2bool, default=False)
     parser.add_argument('--model_path', type=str, default='model_params.pkl')
     parser.add_argument('--if_animation', type=str2bool, default=False)
-    parser.add_argument('--if_logZ', type=str2bool, default=False)
+    parser.add_argument('--add_score', type=str2bool, default=False)
 
     args = parser.parse_args()
     
     if_train = args.if_train
     model_path = args.model_path
     if_animation = args.if_animation
-    if_logZ = args.if_logZ
+    add_score = args.add_score
 
-    K = 2000
+    K = 1000
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 20000
+    num_steps = 2000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
@@ -238,10 +245,10 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     # target distribution is a mixture of 2 gaussians
-    mu = jnp.array([[-2.],[-1.],[0.], [1.], [2.]])
-    dist_sigma = jnp.array([0.15, 0.15, 0.15, 0.15, 0.15])
+    mu = jnp.array([[-2.], [2.]])
+    dist_sigma = jnp.array([1., 1.])
     log_var = jnp.log(dist_sigma**2)
-    weights = jnp.array([0.2, 0.2, 0.2, 0.2, 0.2])
+    weights = jnp.array([0.3, 0.7])
     target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     # Define the dynamic of the process
@@ -270,38 +277,67 @@ if __name__ == "__main__":
         return model.apply(params, y, batch_t)
 
     def scan_step(carry, step):
-        state, key = carry
+        state, key, logz_values = carry
         key, key_ = jr.split(key)
-        state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size)
-            # every 100 steps, print step and current loss
+        state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size, add_score)
+        
+        def estimate_and_store(_):
+            key_logz, _ = jr.split(key)
+            logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
+            return logz_values.at[step//100].set(jnp.var(logz))
+        
+        # estimate logZ every 100 steps
+        logz_values = jax.lax.cond(
+            (step % 100 == 0) & (step < 500*100),
+            estimate_and_store,
+            lambda _: logz_values,
+            operand=None
+        )
+
+        # every 100 steps, print step and current loss
         def do_print(_):
             jax.debug.print("At step {}, loss = {}", step, loss)
             return None
 
         # branch on (step % 100 == 0)
         _ = jax.lax.cond((step % 100) == 0, do_print, lambda _: None, operand=None)
-        return (state, key), loss
+        return (state, key, logz_values), loss
 
     def run_training(state, key):
+        logz_values = jnp.zeros(500) # maximum step: 500*100
         (final_state, final_key), losses = jax.lax.scan(
             scan_step,
-            (state, key),
+            (state, key, logz_values),
             jnp.arange(num_steps)
         )
-        return final_state, final_key, losses
+        return final_state, final_key, losses, logz_values
 
 
     # Training loop
     if if_train:
         key, key_ = jr.split(key)
-        state, key, losses = run_training(state, key_)
+        state, key, losses,logz_variances = run_training(state, key_)
 
         # Plot the loss curve
-        plt.plot(losses)
+        plt.plot(losses, label='Loss')
         plt.xlabel('Step')
         plt.ylabel('Loss')
+        plt.legend()
         plt.title('Loss Curve')
         plt.savefig('loss_curve.png')
+        plt.close()
+
+        # plot the logZ variance at each 100 steps
+        plt.figure()
+        plt.plot(jnp.arange(100)*100, logz_variances, label='logZ Variance')
+        plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
+        plt.xlabel('Training Step')
+        plt.ylabel('logZ Variance')
+        plt.legend()
+        plt.title('Variance of logZ Estimates During Training')
+        fig_name = 'logz_variance_with_score.png' if add_score else 'logz_variance_without_score.png'
+        plt.savefig(fig_name) 
+        plt.close()
 
         # Save the model parameters
         params = state.params
@@ -384,17 +420,17 @@ if __name__ == "__main__":
     #############################
     # LogZ estimation
     #############################
-    if if_logZ:
-        key, *keys = jr.split(key, num=6)
-        batch_sizes = [50, 100, 200, 500, 1000]
-        logZ_data = [estimate_logZ(params, key_i, ou, init_dist, target_dist, score_fn, bs)
-                    for (bs, key_i) in zip(batch_sizes, keys)]
-        # Plot boxplot
-        plt.figure()
-        plt.boxplot(logZ_data, tick_labels=batch_sizes)
-        plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
-        plt.xlabel('Batch size')
-        plt.ylabel('logZ estimates')
-        plt.title('Boxplot of logZ estimates across batch sizes')
-        plt.savefig('logZ_boxplot.png')
-        plt.close()
+    # if if_logZ:
+    #     key, *keys = jr.split(key, num=6)
+    #     batch_sizes = [50, 100, 200, 500, 1000]
+    #     logZ_data = [estimate_logZ(params, key_i, ou, init_dist, target_dist, score_fn, bs)
+    #                 for (bs, key_i) in zip(batch_sizes, keys)]
+    #     # Plot boxplot
+    #     plt.figure()
+    #     plt.boxplot(logZ_data, tick_labels=batch_sizes)
+    #     plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
+    #     plt.xlabel('Batch size')
+    #     plt.ylabel('logZ estimates')
+    #     plt.title('Boxplot of logZ estimates across batch sizes')
+    #     plt.savefig('logZ_boxplot.png')
+    #     plt.close()
