@@ -233,7 +233,7 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 2000
+    num_steps = 200
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
@@ -329,7 +329,7 @@ if __name__ == "__main__":
 
         # plot the logZ variance at each 100 steps
         plt.figure()
-        plt.plot(jnp.arange(100)*100, logz_variances, label='logZ Variance')
+        plt.plot(jnp.arange(num_steps//100)*100, logz_variances, label='logZ Variance')
         plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
         plt.xlabel('Training Step')
         plt.ylabel('logZ Variance')
