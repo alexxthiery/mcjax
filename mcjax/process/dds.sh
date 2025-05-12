@@ -1,8 +1,8 @@
 #!/bin/bash
 
-if_train=false
+if_train=true
 model_path='model_params.pkl'
-if_animation=false
+if_animation=true
 if_logZ=true
 
 python dds.py \
