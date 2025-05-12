@@ -391,7 +391,8 @@ if __name__ == "__main__":
                     for (bs, key_i) in zip(batch_sizes, keys)]
         # Plot boxplot
         plt.figure()
-        plt.boxplot(logZ_data, labels=batch_sizes)
+        plt.boxplot(logZ_data, tick_labels=batch_sizes)
+        plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
         plt.xlabel('Batch size')
         plt.ylabel('logZ estimates')
         plt.title('Boxplot of logZ estimates across batch sizes')
