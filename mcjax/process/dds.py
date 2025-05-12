@@ -149,6 +149,60 @@ def generate_samples(params, score_fn, ou, num_samples, key):
     return y_sequence #[K, num_samples, data_dim] 
 
 
+@partial(jax.jit, static_argnums=(2,3,4,5,6))
+def estimate_logZ(params, key,
+                  ou,          
+                  init_dist,    
+                  target_dist,  
+                  score_fn,  
+                  batch_size):
+    """
+    Runs one Monte Carlo estimate of log Z per sample.
+    
+    Returns:
+      logZ: [batch_size] array of log-estimates of Z.
+    """
+    key, key_ = jr.split(key)
+    y_0 = init_dist.sample(key_, (batch_size,))
+
+    # Reverse chain + accumulate r_k
+    def scan_step(carry, k):
+        y_k, r_k, key = carry
+        key, key_ = jr.split(key)
+        eps = jr.normal(key_, y_k.shape)
+
+        alpha_Kmk = ou.alpha[ou.K - 1 - k]
+        sqrt1m    = ou.sqrt_1m_alpha[ou.K - 1 - k]
+        lambda_Kmk = 1.0 - sqrt1m
+
+        # score network
+        s = score_fn(params, ou.K - 1 - k, y_k)         
+
+        # reverse OU step
+        y_next = sqrt1m * y_k \
+               + 2.0 * (ou.sigma**2) * lambda_Kmk * s \
+               + ou.sigma * jnp.sqrt(alpha_Kmk) * eps
+
+        # accumulate the quadratic term
+        r_next = r_k + (2.0 * ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
+
+        return (y_next, r_next, key), None
+
+    # initialize r_0 = 0
+    init_carry = (y_0, jnp.zeros(batch_size), key)
+    (y_K, r_K, _), _ = jax.lax.scan(
+        scan_step,
+        init_carry,
+        jnp.arange(ou.K)
+    )
+
+    # compute log Z estimates
+    log_ref  = init_dist.batch(y_K)
+    log_targ = target_dist.batch(y_K)
+    logZ     = r_K + log_ref - log_targ
+
+    return logZ
+
 
 if __name__ == "__main__":
     if_train = False
@@ -257,20 +311,10 @@ if __name__ == "__main__":
     )
 
     y_seq = jax.device_get(y_seq)
-    
 
-    # plot the last distribution of y_seq against dataset
-    # dataset = target_dist.sample(key_, 10000)
-    # plt.figure(figsize=(8, 4))
-    # plt.hist(dataset, bins=30, density=True, alpha=0.5, label='Target Distribution')
-    # plt.hist(y_seq[-1], bins=30, density=True, alpha=0.5, label='Final Samples')
-    # plt.hist(y_seq[0], bins=30, density=True, alpha=0.5, label='Initial Samples')
-    # plt.hist(y_seq[K//2], bins=30, density=True, alpha=0.5, label='Middle Samples')
-    # plt.title('Generated Samples vs Target Distribution')
-    # plt.legend()
-    # plt.savefig('generated_samples.png')
-
-    # Modify the animation code section
+    ##########################################
+    # Animation of the density evolution
+    ##########################################
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Generate reference distributions and KDEs
@@ -301,10 +345,7 @@ if __name__ == "__main__":
     ax.legend(loc='upper right')
 
     def animate(frame):
-        # Update line data
         line.set_data(kde_x, frame_densities[frame])
-        
-        # Update time text
         time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
         
         return line, time_text
@@ -323,3 +364,18 @@ if __name__ == "__main__":
     ani.save('density_evolution.mp4', writer=writer)
 
     plt.close()
+
+    #############################
+    # LogZ estimation
+    #############################
+    key, *keys = jr.split(key, num=6)
+    batch_sizes = [50, 100, 200, 500, 1000]
+    logZ_data = [estimate_logZ(params, key_i, ou, init_dist, target_dist, score_fn, bs)
+                 for (bs, key_i) in zip(batch_sizes, keys)]
+    # Plot boxplot
+    plt.figure()
+    plt.boxplot(logZ_data, labels=batch_sizes)
+    plt.xlabel('Batch size')
+    plt.ylabel('logZ estimates')
+    plt.title('Boxplot of logZ estimates across batch sizes')
+    plt.show()
