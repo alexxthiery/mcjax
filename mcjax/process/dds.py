@@ -11,6 +11,7 @@ from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
 import pickle
 import os
+import argparse
 
 import sys
 sys.path.append('../../')
@@ -163,7 +164,7 @@ def estimate_logZ(params, key,
       logZ: [batch_size] array of log-estimates of Z.
     """
     key, key_ = jr.split(key)
-    y_0 = init_dist.sample(key_, (batch_size,))
+    y_0 = init_dist.sample(key_, batch_size)
 
     # Reverse chain + accumulate r_k
     def scan_step(carry, k):
@@ -205,8 +206,22 @@ def estimate_logZ(params, key,
 
 
 if __name__ == "__main__":
-    if_train = False
-    model_path = 'model_params.pkl'
+    
+    def str2bool(v):
+        return v.lower() in ('true', '1', 'yes')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--if_train', type=str2bool, default=False)
+    parser.add_argument('--model_path', type=str, default='model_params.pkl')
+    parser.add_argument('--if_animation', type=str2bool, default=False)
+    parser.add_argument('--if_logZ', type=str2bool, default=False)
+
+    args = parser.parse_args()
+    
+    if_train = args.if_train
+    model_path = args.model_path
+    if_animation = args.if_animation
+    if_logZ = args.if_logZ
+
     K = 1000
     ou_sigma = 1.0
     learning_rate = 1e-4
@@ -315,67 +330,70 @@ if __name__ == "__main__":
     ##########################################
     # Animation of the density evolution
     ##########################################
-    fig, ax = plt.subplots(figsize=(10, 6))
+    if if_animation:
+        fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Generate reference distributions and KDEs
-    x = jnp.linspace(-7, 10, 1000)
-    initial_kde = gaussian_kde(init_dist.sample(jr.PRNGKey(0), 100000).flatten())
-    target_kde = gaussian_kde(target_dist.sample(jr.PRNGKey(0), 100000).flatten())
+        # Generate reference distributions and KDEs
+        x = jnp.linspace(-7, 10, 1000)
+        initial_kde = gaussian_kde(init_dist.sample(jr.PRNGKey(0), 100000).flatten())
+        target_kde = gaussian_kde(target_dist.sample(jr.PRNGKey(0), 100000).flatten())
 
-    # Precompute sample KDEs for all frames
-    kde_x = jnp.linspace(-7, 10, 500)
-    frame_densities = []
-    for frame in range(K):
-        current_samples = y_seq[frame].flatten()
-        kde = gaussian_kde(current_samples)
-        frame_densities.append(kde(kde_x))
+        # Precompute sample KDEs for all frames
+        kde_x = jnp.linspace(-7, 10, 500)
+        frame_densities = []
+        for frame in range(K):
+            current_samples = y_seq[frame].flatten()
+            kde = gaussian_kde(current_samples)
+            frame_densities.append(kde(kde_x))
 
-    # Create static reference lines
-    ax.plot(kde_x, initial_kde(kde_x), 'b--', linewidth=2, label='Initial Distribution')
-    ax.plot(kde_x, target_kde(kde_x), 'g--', linewidth=2, label='Target Distribution')
+        # Create static reference lines
+        ax.plot(kde_x, initial_kde(kde_x), 'b--', linewidth=2, label='Initial Distribution')
+        ax.plot(kde_x, target_kde(kde_x), 'g--', linewidth=2, label='Target Distribution')
 
-    # Initialize animated elements
-    line, = ax.plot([], [], 'r-', linewidth=2, label='Current Samples')
-    time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
-    ax.set_xlim(-7, 10)
-    ax.set_ylim(0, 0.5)
-    ax.set_xlabel('Value')
-    ax.set_ylabel('Density')
-    ax.set_title('Density Evolution During Reverse Process')
-    ax.legend(loc='upper right')
+        # Initialize animated elements
+        line, = ax.plot([], [], 'r-', linewidth=2, label='Current Samples')
+        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
+        ax.set_xlim(-7, 10)
+        ax.set_ylim(0, 0.5)
+        ax.set_xlabel('Value')
+        ax.set_ylabel('Density')
+        ax.set_title('Density Evolution During Reverse Process')
+        ax.legend(loc='upper right')
 
-    def animate(frame):
-        line.set_data(kde_x, frame_densities[frame])
-        time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
-        
-        return line, time_text
+        def animate(frame):
+            line.set_data(kde_x, frame_densities[frame])
+            time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
+            
+            return line, time_text
 
-    # Create animation
-    ani = animation.FuncAnimation(
-        fig=fig,
-        func=animate,
-        frames=K,
-        interval=20,
-        blit=True
-    )
+        # Create animation
+        ani = animation.FuncAnimation(
+            fig=fig,
+            func=animate,
+            frames=K,
+            interval=20,
+            blit=True
+        )
 
-    # Save animation
-    writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
-    ani.save('density_evolution.mp4', writer=writer)
+        # Save animation
+        writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
+        ani.save('density_evolution.mp4', writer=writer)
 
-    plt.close()
+        plt.close()
 
     #############################
     # LogZ estimation
     #############################
-    key, *keys = jr.split(key, num=6)
-    batch_sizes = [50, 100, 200, 500, 1000]
-    logZ_data = [estimate_logZ(params, key_i, ou, init_dist, target_dist, score_fn, bs)
-                 for (bs, key_i) in zip(batch_sizes, keys)]
-    # Plot boxplot
-    plt.figure()
-    plt.boxplot(logZ_data, labels=batch_sizes)
-    plt.xlabel('Batch size')
-    plt.ylabel('logZ estimates')
-    plt.title('Boxplot of logZ estimates across batch sizes')
-    plt.show()
+    if if_logZ:
+        key, *keys = jr.split(key, num=6)
+        batch_sizes = [50, 100, 200, 500, 1000]
+        logZ_data = [estimate_logZ(params, key_i, ou, init_dist, target_dist, score_fn, bs)
+                    for (bs, key_i) in zip(batch_sizes, keys)]
+        # Plot boxplot
+        plt.figure()
+        plt.boxplot(logZ_data, labels=batch_sizes)
+        plt.xlabel('Batch size')
+        plt.ylabel('logZ estimates')
+        plt.title('Boxplot of logZ estimates across batch sizes')
+        plt.savefig('logZ_boxplot.png')
+        plt.close()
