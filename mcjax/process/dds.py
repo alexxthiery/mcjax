@@ -288,7 +288,7 @@ if __name__ == "__main__":
         
         # estimate logZ every 100 steps
         logz_values = jax.lax.cond(
-            (step % 100 == 0) & (step < 500*100),
+            (step % 100 == -1) & (step < 500*100),
             estimate_and_store,
             lambda _: logz_values,
             operand=None
