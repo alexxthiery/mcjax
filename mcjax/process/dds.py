@@ -330,7 +330,7 @@ if __name__ == "__main__":
         # plot the logZ variance at each 100 steps
         plt.figure()
         print(logz_variances.shape)
-        plt.plot(jnp.arange(num_steps//100)*100, logz_variances, label='logZ Variance')
+        plt.plot(jnp.arange(num_steps//100)*100, logz_variances[:num_steps//100], label='logZ Variance')
         plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
         plt.xlabel('Training Step')
         plt.ylabel('logZ Variance')
