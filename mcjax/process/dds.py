@@ -284,6 +284,7 @@ if __name__ == "__main__":
         def estimate_and_store(_):
             key_logz, _ = jr.split(key)
             logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
+            jax.debug.print("At step {}, logZ = {}", step, logz)
             return logz_values.at[step//100].set(jnp.var(logz))
         
         # estimate logZ every 100 steps
@@ -330,8 +331,7 @@ if __name__ == "__main__":
         # plot the logZ variance at each 100 steps
         plt.figure()
         print(logz_variances)
-        plt.plot(jnp.arange(num_steps//100 + 1)*100, logz_variances[:num_steps//100], label='logZ Variance')
-        plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
+        plt.plot(100 + jnp.arange(num_steps//100)*100, logz_variances[:num_steps//100], label='logZ Variance')
         plt.xlabel('Training Step')
         plt.ylabel('logZ Variance')
         plt.legend()
