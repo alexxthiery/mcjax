@@ -305,7 +305,7 @@ if __name__ == "__main__":
 
     def run_training(state, key):
         logz_values = jnp.zeros(500) # maximum step: 500*100
-        (final_state, final_key), losses = jax.lax.scan(
+        (final_state, final_key, logz_values), losses = jax.lax.scan(
             scan_step,
             (state, key, logz_values),
             jnp.arange(num_steps)
