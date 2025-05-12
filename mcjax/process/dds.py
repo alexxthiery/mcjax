@@ -222,11 +222,11 @@ if __name__ == "__main__":
     if_animation = args.if_animation
     if_logZ = args.if_logZ
 
-    K = 1000
+    K = 2000
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 10000
+    num_steps = 20000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
