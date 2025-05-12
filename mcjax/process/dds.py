@@ -93,7 +93,7 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
 
         
         main_term = (2.0 * ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
-        zero_exp_term = jnp.sum(s * eps, axis=-1)
+        zero_exp_term = 2.0 * ou.sigma * jnp.sqrt(lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s * eps, axis=-1)
         r_next = r_k + jax.lax.cond(
             add_score,
             lambda: main_term + zero_exp_term,
@@ -229,11 +229,11 @@ if __name__ == "__main__":
     if_animation = args.if_animation
     add_score = args.add_score
 
-    K = 1000
+    K = 2000
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 2000
+    num_steps = 4000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
@@ -280,15 +280,15 @@ if __name__ == "__main__":
         state, key, logz_values = carry
         key, key_ = jr.split(key)
         state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size, add_score)
-        
+
         def estimate_and_store(_):
             key_logz, _ = jr.split(key)
             logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
-            return logz_values.at[step//100].set(jnp.var(logz))
+            return logz_values.at[step//10].set(jnp.var(logz))
         
         # estimate logZ every 100 steps
         logz_values = jax.lax.cond(
-            (step % 100 == 0) & (step < 500*100),
+            (step % 10 == 9) & (step < 5000*10),
             estimate_and_store,
             lambda _: logz_values,
             operand=None
@@ -304,8 +304,8 @@ if __name__ == "__main__":
         return (state, key, logz_values), loss
 
     def run_training(state, key):
-        logz_values = jnp.zeros(500) # maximum step: 500*100
-        (final_state, final_key), losses = jax.lax.scan(
+        logz_values = jnp.zeros(5000) # maximum step: 5000*10
+        (final_state, final_key, logz_values), losses = jax.lax.scan(
             scan_step,
             (state, key, logz_values),
             jnp.arange(num_steps)
@@ -324,13 +324,13 @@ if __name__ == "__main__":
         plt.ylabel('Loss')
         plt.legend()
         plt.title('Loss Curve')
-        plt.savefig('loss_curve.png')
+        fig_name = 'loss_curve_with_score.png' if add_score else 'loss_curve_without_score.png'
+        plt.savefig(fig_name)
         plt.close()
 
         # plot the logZ variance at each 100 steps
         plt.figure()
-        plt.plot(jnp.arange(100)*100, logz_variances, label='logZ Variance')
-        plt.axhline(0, color='red', linestyle='--', label='True logZ = 0')
+        plt.plot(10 + jnp.arange(num_steps//10)*10, logz_variances[:num_steps//10], label='logZ Variance')
         plt.xlabel('Training Step')
         plt.ylabel('logZ Variance')
         plt.legend()
@@ -413,7 +413,8 @@ if __name__ == "__main__":
 
         # Save animation
         writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
-        ani.save('density_evolution.mp4', writer=writer)
+        ani_name = 'density_evolution_with_score.mp4' if add_score else 'density_evolution_without_score.mp4'
+        ani.save(ani_name, writer=writer)
 
         plt.close()
 
