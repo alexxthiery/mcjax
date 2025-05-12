@@ -280,10 +280,6 @@ if __name__ == "__main__":
         state, key, logz_values = carry
         key, key_ = jr.split(key)
         state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size, add_score)
-        
-        jax.debug.print("At step {}",step)
-        jax.debug.print("step % 100==-1 {}", step%100==-1)
-        jax
 
         def estimate_and_store(_):
             key_logz, _ = jr.split(key)
@@ -293,7 +289,7 @@ if __name__ == "__main__":
         
         # estimate logZ every 100 steps
         logz_values = jax.lax.cond(
-            (step % 100 == -1) & (step < 500*100),
+            (step % 100 == 99) & (step < 500*100),
             estimate_and_store,
             lambda _: logz_values,
             operand=None
@@ -334,7 +330,6 @@ if __name__ == "__main__":
 
         # plot the logZ variance at each 100 steps
         plt.figure()
-        print(logz_variances)
         plt.plot(100 + jnp.arange(num_steps//100)*100, logz_variances[:num_steps//100], label='logZ Variance')
         plt.xlabel('Training Step')
         plt.ylabel('logZ Variance')
