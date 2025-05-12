@@ -281,7 +281,9 @@ if __name__ == "__main__":
         key, key_ = jr.split(key)
         state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size, add_score)
         
-        jax.debug.print(step, step%100)
+        jax.debug.print(step)
+        jax.debug.print(step%100)
+        
         def estimate_and_store(_):
             key_logz, _ = jr.split(key)
             logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
