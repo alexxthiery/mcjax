@@ -324,7 +324,8 @@ if __name__ == "__main__":
         plt.ylabel('Loss')
         plt.legend()
         plt.title('Loss Curve')
-        plt.savefig('loss_curve.png')
+        fig_name = 'loss_curve_with_score.png' if add_score else 'loss_curve_without_score.png'
+        plt.savefig(fig_name)
         plt.close()
 
         # plot the logZ variance at each 100 steps
@@ -412,7 +413,8 @@ if __name__ == "__main__":
 
         # Save animation
         writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
-        ani.save('density_evolution.mp4', writer=writer)
+        ani_name = 'density_evolution_with_score.mp4' if add_score else 'density_evolution_without_score.mp4'
+        ani.save(ani_name, writer=writer)
 
         plt.close()
 
