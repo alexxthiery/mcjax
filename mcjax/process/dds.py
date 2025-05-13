@@ -93,7 +93,7 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
 
         
         main_term = (2.0 * ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
-        zero_exp_term = jnp.sum(s * eps, axis=-1)
+        zero_exp_term = 2.0 * ou.sigma * jnp.sqrt(lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s * eps, axis=-1)
         r_next = r_k + jax.lax.cond(
             add_score,
             lambda: main_term + zero_exp_term,
