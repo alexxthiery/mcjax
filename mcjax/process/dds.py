@@ -56,12 +56,7 @@ class MLPModel(nn.Module):
             nn.Dense(256),
             nn.relu
         ])(t_emb)        
-        x_embed = nn.Sequential([
-            nn.Dense(64),
-            nn.relu,
-            nn.Dense(256),
-            nn.relu
-        ])(x_emb)                                         
+        x_embed = x_emb.reshape(x.shape[0], -1)                                     
         h = jnp.concatenate([x, x_embed, t_embed], axis=-1)   
         h = nn.Dense(128)(h)
         h = nn.LayerNorm()(h)
