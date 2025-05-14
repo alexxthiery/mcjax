@@ -61,7 +61,8 @@ class MLPModel(nn.Module):
             nn.relu
         ])(x_emb).reshape(x.shape[0],-1)
                                            
-        h = jnp.concatenate([x, x_embed, t_embed], axis=-1)   
+        # h = jnp.concatenate([x, x_embed, t_embed], axis=-1)  
+        h = jnp.concatenate([x, t_embed], axis=-1)  
         h = nn.Dense(128)(h)
         h = nn.LayerNorm()(h)
         h = nn.relu(h)            
