@@ -42,7 +42,12 @@ class MLPModel(nn.Module):
         emb_scale = jnp.log(10000.0) / (half_dim - 1)
         freqs = jnp.exp(jnp.arange(half_dim) * -emb_scale)       
         t_proj = t[:, None] * freqs[None, :]                     
-        emb = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)  
+        t_emb = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)  
+
+        # sinusoidal x embedding
+        x_proj = x[:, None, :] * freqs[None, None, :]
+        x_emb = jnp.concatenate([jnp.sin(x_proj), jnp.cos(x_proj)], axis=-1)
+
 
         # mix time info
         t_embed = nn.Sequential([
@@ -50,8 +55,14 @@ class MLPModel(nn.Module):
             nn.relu,
             nn.Dense(256),
             nn.relu
-        ])(emb)                                                 
-        h = jnp.concatenate([x, t_embed], axis=-1)   
+        ])(t_emb)        
+        x_embed = nn.Sequential([
+            nn.Dense(64),
+            nn.relu,
+            nn.Dense(256),
+            nn.relu
+        ])(x_emb)                                         
+        h = jnp.concatenate([x, x_embed, t_embed], axis=-1)   
         h = nn.Dense(128)(h)
         h = nn.LayerNorm()(h)
         h = nn.relu(h)            
@@ -233,7 +244,7 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 4000
+    num_steps = 1000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
@@ -245,10 +256,10 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     # target distribution is a mixture of 2 gaussians
-    mu = jnp.array([[-2.], [2.]])
-    dist_sigma = jnp.array([1., 1.])
+    mu = jnp.array([[-2.],[-1.],[0.],[1.],[2.]])
+    dist_sigma = jnp.array([0.15, 0.15, 0.15, 0.15, 0.15])
     log_var = jnp.log(dist_sigma**2)
-    weights = jnp.array([0.3, 0.7])
+    weights = jnp.array([0.2, 0.2, 0.2, 0.2, 0.2])
     target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     # Define the dynamic of the process
