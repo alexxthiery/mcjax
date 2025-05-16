@@ -231,7 +231,8 @@ if __name__ == "__main__":
     parser.add_argument('--if_train', type=str2bool, default=False)
     parser.add_argument('--model_path', type=str, default='model_params.pkl')
     parser.add_argument('--if_animation', type=str2bool, default=False)
-    parser.add_argument('--add_score', type=str2bool, default=False)
+    parser.add_argument('--add_score', type=str2bool, default=False) # True if adding the score term(with zero mean) in loss function
+    parser.add_argument('--variable_ts', type=str2bool, default=False) # True if using variable (i.e. non-equidistant timesteps) for the diffusion process  
 
     args = parser.parse_args()
     
@@ -239,18 +240,24 @@ if __name__ == "__main__":
     model_path = args.model_path
     if_animation = args.if_animation
     add_score = args.add_score
+    variable_ts = args.variable_ts
 
     K = 2000
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 1000
+    num_steps = 2000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
-    beta_start, beta_end = 0.1, 20.0
-    beta = beta_start + (beta_end - beta_start) * (timesteps / (K - 1))
-    alpha = 1.0 - jnp.exp(-2.0 * beta / K)
+    if variable_ts:
+        beta_start, beta_end = 0.1, 20.0
+        beta = beta_start + (beta_end - beta_start) * (timesteps / (K - 1))
+        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
+    else:
+        # beta all set to 1/2
+        beta = jnp.ones(K) * 0.5
+        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
 
     # Define the initial distribution of reference process
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
