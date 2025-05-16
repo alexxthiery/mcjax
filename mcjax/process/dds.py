@@ -61,8 +61,8 @@ class MLPModel(nn.Module):
             nn.relu
         ])(x_emb).reshape(x.shape[0],-1)
                                            
-        # h = jnp.concatenate([x, x_embed, t_embed], axis=-1)  
-        h = jnp.concatenate([x, t_embed], axis=-1)  
+        h = jnp.concatenate([x, x_embed, t_embed], axis=-1)  
+        # h = jnp.concatenate([x, t_embed], axis=-1)  
         h = nn.Dense(128)(h)
         h = nn.LayerNorm()(h)
         h = nn.relu(h)            
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 2000
+    num_steps = 20000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
