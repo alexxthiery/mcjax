@@ -246,7 +246,7 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 4000
+    num_steps = 10000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
