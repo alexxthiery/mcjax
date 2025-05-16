@@ -3,7 +3,7 @@
 if_train=true
 model_path='model_params.pkl'
 if_animation=true
-add_score=false
+add_score=true
 variable_ts=true
 
 python dds.py \
