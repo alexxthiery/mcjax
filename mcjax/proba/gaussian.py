@@ -115,7 +115,7 @@ class MixedIsotropicGauss(LogDensity):
         def comp_grad(mu_i, log_var_i, log_w_i):
             sigma_i = jnp.exp(0.5*log_var_i)
             w_i = jnp.exp(log_w_i)
-            return w_i * (x - mu_i[None, :]) / sigma_i**2
+            return w_i * (x - mu_i) / sigma_i**2
 
         all_grads = jax.vmap(
             comp_grad,
