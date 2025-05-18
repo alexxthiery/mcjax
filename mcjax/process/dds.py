@@ -98,7 +98,6 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
         lambda_Kmk = 1.0 - sqrt1m
 
         s = score_fn(params, ou.K - 1 - k, y_k)
-        print(s.shape)
         y_next = sqrt1m * y_k \
                + 2.0 * (ou.sigma**2) * lambda_Kmk * s \
                + ou.sigma * jnp.sqrt(alpha_Kmk) * eps
