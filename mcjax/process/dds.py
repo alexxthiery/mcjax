@@ -294,7 +294,8 @@ if __name__ == "__main__":
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
         nn1, nn2 = model.apply(params, y, batch_t)
         grad_log_mu = target_dist.grad_batch(y)  
-        result = nn1 + nn2 * grad_log_mu  
+        result = nn1 + nn2 * grad_log_mu 
+        print(nn.1.shape, nn2.shape, grad_log_mu.shape) 
         return result
 
     def scan_step(carry, step):
