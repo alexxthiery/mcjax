@@ -25,10 +25,10 @@ print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
 
 class MLPModel(nn.Module):
-    '''
+    """
     The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * \nabla log \mu(x)
     Thus the output of both networks are given.
-    '''
+    """
     dim: int   
     T: int      # total number of diffusion steps
 
@@ -295,7 +295,8 @@ if __name__ == "__main__":
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
         nn1, nn2 = model.apply(params, y, batch_t)
         grad_log_mu = target_dist.grad_batch(y)  
-        return nn1 + nn2[:, None] * grad_log_mu  
+        result = nn1 + nn2[:, None] * grad_log_mu  
+        return result.reshape(y.shape)
 
     def scan_step(carry, step):
         state, key, logz_values = carry
