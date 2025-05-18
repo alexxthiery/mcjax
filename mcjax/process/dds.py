@@ -98,6 +98,7 @@ def dds_loss(params, key, ou: OU, init_dist: LogDensity,
         lambda_Kmk = 1.0 - sqrt1m
 
         s = score_fn(params, ou.K - 1 - k, y_k)
+        print(s.shape)
         y_next = sqrt1m * y_k \
                + 2.0 * (ou.sigma**2) * lambda_Kmk * s \
                + ou.sigma * jnp.sqrt(alpha_Kmk) * eps
@@ -294,8 +295,7 @@ if __name__ == "__main__":
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
         nn1, nn2 = model.apply(params, y, batch_t)
         grad_log_mu = target_dist.grad_batch(y)  
-        result = nn1 + nn2 * grad_log_mu 
-        # print(nn1.shape, nn2.shape, grad_log_mu.shape) 
+        result = nn1 + nn2 * grad_log_mu  
         return result
 
     def scan_step(carry, step):
