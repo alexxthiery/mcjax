@@ -75,9 +75,8 @@ class MLPModel(nn.Module):
         
         nn2_out = nn.Sequential([
             nn.Dense(64), nn.relu,
-            nn.Dense(1)  
+            nn.Dense(self.dim)  
         ])(t_emb_nn2)
-        nn2_out = jnp.squeeze(nn2_out, axis=-1)
 
         return nn1_out, nn2_out
     
@@ -295,8 +294,8 @@ if __name__ == "__main__":
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
         nn1, nn2 = model.apply(params, y, batch_t)
         grad_log_mu = target_dist.grad_batch(y)  
-        result = nn1 + nn2[:, None] * grad_log_mu  
-        return result.reshape(y.shape)
+        result = nn1 + nn2 * grad_log_mu  
+        return result
 
     def scan_step(carry, step):
         state, key, logz_values = carry
