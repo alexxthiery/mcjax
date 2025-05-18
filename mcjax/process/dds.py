@@ -25,60 +25,61 @@ print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
 
 class MLPModel(nn.Module):
+    '''
+    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * \nabla log \mu(x)
+    Thus the output of both networks are given.
+    '''
     dim: int   
     T: int      # total number of diffusion steps
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
-        """
-        Args:
-          x: [batch, dim] data at time t
-          t: [batch] integer timesteps in {0,1,...,T-1}
-        Returns:
-          score estimate of shape [batch, dim]
-        """
-        # Sinusoidal time embedding 
+    def __call__(self, x: jnp.ndarray, t: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        # Shared time embedding components
         half_dim = 32
         emb_scale = jnp.log(10000.0) / (half_dim - 1)
-        freqs = jnp.exp(jnp.arange(half_dim) * -emb_scale)       
-        t_proj = t[:, None] * freqs[None, :]                     
-        t_emb = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)  
-
-        # sinusoidal x embedding
-        x_proj = x[:, None, :] * freqs[None, None, :]
-        x_emb = jnp.concatenate([jnp.sin(x_proj), jnp.cos(x_proj)], axis=-1)
-
-
-        # mix time info
+        freqs = jnp.exp(jnp.arange(half_dim) * -emb_scale)
+        
+        # ========== NN1 Branch (x + time) ==========
+        # Time embedding
+        t_proj = t[:, None] * freqs[None, :]
+        t_emb = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)
+        
         t_embed = nn.Sequential([
-            nn.Dense(64),
-            nn.relu,
-            nn.Dense(256),
-            nn.relu
-        ])(t_emb)        
-        x_embed = nn.Sequential([
-            nn.Dense(16),
-            nn.relu
-        ])(x_emb).reshape(x.shape[0],-1)
-                                           
-        h = jnp.concatenate([x, x_embed, t_embed], axis=-1)  
-        # h = jnp.concatenate([x, t_embed], axis=-1)  
+            nn.Dense(64), nn.relu,
+            nn.Dense(256), nn.relu
+        ])(t_emb)
+        
+        # Combine with x
+        h = jnp.concatenate([x, t_embed], axis=-1)
         h = nn.Dense(128)(h)
         h = nn.LayerNorm()(h)
-        h = nn.relu(h)            
-
+        h = nn.relu(h)
+        
+        # Residual blocks
         for _ in range(2):
             h0 = h
             h = nn.Dense(128)(h)
             h = nn.LayerNorm()(h)
             h = nn.relu(h)
             h = nn.Dense(128)(h)
-            h = h + h0                                           
+            h = h + h0
             h = nn.LayerNorm()(h)
             h = nn.relu(h)
+            
+        nn1_out = nn.Dense(self.dim)(h)
 
-        out = nn.Dense(self.dim)(h)                             
-        return out
+        # ========== NN2 Branch (time only) ==========
+        # Time embedding
+        t_proj_nn2 = t[:, None] * freqs[None, :]
+        t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
+        
+        nn2_out = nn.Sequential([
+            nn.Dense(64), nn.relu,
+            nn.Dense(1)  
+        ])(t_emb_nn2)
+        nn2_out = jnp.squeeze(nn2_out, axis=-1)
+
+        return nn1_out, nn2_out
     
 
 def dds_loss(params, key, ou: OU, init_dist: LogDensity,
@@ -246,7 +247,7 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 20000
+    num_steps = 2000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
@@ -292,7 +293,9 @@ if __name__ == "__main__":
     # score function
     def score_fn(params, k, y):
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-        return model.apply(params, y, batch_t)
+        nn1, nn2 = model.apply(params, y, batch_t)
+        grad_log_mu = target_dist.grad_batch(y)  
+        return nn1 + nn2[:, None] * grad_log_mu  
 
     def scan_step(carry, step):
         state, key, logz_values = carry
