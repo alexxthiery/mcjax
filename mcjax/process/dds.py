@@ -19,7 +19,7 @@ sys.path.append('../../')
 
 from mcjax.proba.density import LogDensity
 from mcjax.process.ou import OU
-from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss
+from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
 
 print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     learning_rate = 1e-4
     batch_size = 128
     num_steps = 2000
-    data_dim = 1
+    data_dim = 2
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
     if variable_ts:
@@ -262,12 +262,15 @@ if __name__ == "__main__":
     # Define the initial distribution of reference process
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
-    # target distribution is a mixture of 2 gaussians
-    mu = jnp.array([[-2.],[0.],[2.]])
-    dist_sigma = jnp.array([0.3, 0.3, 0.3])
-    log_var = jnp.log(dist_sigma**2)
-    weights = jnp.array([0.3, 0.4, 0.3])
-    target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+    #------------------ target distribution is one-dim mixed gaussian -----------------
+    # mu = jnp.array([[-2.],[0.],[2.]])
+    # dist_sigma = jnp.array([0.3, 0.3, 0.3])
+    # log_var = jnp.log(dist_sigma**2)
+    # weights = jnp.array([0.3, 0.4, 0.3])
+    # target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+
+    #------------------ target distribution is GMM40 ----------------- 
+    target_dist = GMM40()
 
     # Define the dynamic of the process
     ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
