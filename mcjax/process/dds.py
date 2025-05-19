@@ -246,7 +246,7 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 4000
+    num_steps = 2000
     data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
@@ -263,10 +263,10 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     # target distribution is a mixture of 2 gaussians
-    mu = jnp.array([[-2.],[-1.],[0.],[1.],[2.]])
-    dist_sigma = jnp.array([0.15, 0.15, 0.15, 0.15, 0.15])
+    mu = jnp.array([[-2.],[0.],[2.]])
+    dist_sigma = jnp.array([0.3, 0.3, 0.3])
     log_var = jnp.log(dist_sigma**2)
-    weights = jnp.array([0.2, 0.2, 0.2, 0.2, 0.2])
+    weights = jnp.array([0.3, 0.4, 0.3])
     target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     # Define the dynamic of the process
