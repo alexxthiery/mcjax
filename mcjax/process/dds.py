@@ -294,7 +294,9 @@ if __name__ == "__main__":
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
         nn1, nn2 = model.apply(params, y, batch_t)
         grad_log_mu = target_dist.grad_batch(y)  
-        result = nn1 + nn2 * grad_log_mu  
+        # Normalize the gradient feature
+        g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
+        result = nn1 + nn2 * g  
         return result
 
     def scan_step(carry, step):
