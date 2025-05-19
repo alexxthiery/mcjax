@@ -4,7 +4,7 @@ if_train=true
 model_path='model_params.pkl'
 if_animation=true
 add_score=true
-variable_ts=true
+variable_ts=false
 
 python dds.py \
   --if_train $if_train \

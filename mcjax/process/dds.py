@@ -26,7 +26,7 @@ jax.config.update("jax_platform_name", "gpu")
 
 class MLPModel(nn.Module):
     """
-    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * \nabla log \mu(x)
+    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * nabla log(mu(x))
     Thus the output of both networks are given.
     """
     dim: int   
@@ -246,8 +246,8 @@ if __name__ == "__main__":
     ou_sigma = 1.0
     learning_rate = 1e-4
     batch_size = 128
-    num_steps = 2000
-    data_dim = 2
+    num_steps = 4000
+    data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
     if variable_ts:
@@ -263,14 +263,14 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     #------------------ target distribution is one-dim mixed gaussian -----------------
-    # mu = jnp.array([[-2.],[0.],[2.]])
-    # dist_sigma = jnp.array([0.3, 0.3, 0.3])
-    # log_var = jnp.log(dist_sigma**2)
-    # weights = jnp.array([0.3, 0.4, 0.3])
-    # target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+    mu = jnp.array([[-2.],[0.],[2.]])
+    dist_sigma = jnp.array([0.3, 0.3, 0.3])
+    log_var = jnp.log(dist_sigma**2)
+    weights = jnp.array([0.3, 0.4, 0.3])
+    target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     #------------------ target distribution is GMM40 ----------------- 
-    target_dist = GMM40()
+    # target_dist = GMM40()
 
     # Define the dynamic of the process
     ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
@@ -455,7 +455,9 @@ if __name__ == "__main__":
             Z_target = target_dist.batch(pts).reshape(X.shape)
 
             # Plot static target contour
-            ax.contour(X, Y, Z_target, levels=10, colors='green', linestyles='--', alpha=0.5, label='Target Distribution')
+            contour = ax.contourf(X, Y, jnp.exp(Z_target),levels = 10)
+            fig.colorbar(contour, ax=ax)
+
 
             # Initialize animated elements
             scatter = ax.scatter([], [], c='red', s=10, alpha=0.6, label='Samples')
@@ -465,11 +467,11 @@ if __name__ == "__main__":
             ax.set_xlabel('X')
             ax.set_ylabel('Y')
             ax.set_title('Sample Movement During Reverse Process')
-            ax.legend(loc='upper right')
+            
 
             def animate(frame):
                 # Update sample positions (convert JAX array to NumPy for matplotlib)
-                current_samples = np.array(y_seq[frame])
+                current_samples = jnp.array(y_seq[frame])
                 scatter.set_offsets(current_samples)
                 time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
                 return scatter, time_text
