@@ -393,56 +393,103 @@ if __name__ == "__main__":
     # Animation of the density evolution
     ##########################################
     if if_animation:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        if data_dim == 1:
+            fig, ax = plt.subplots(figsize=(10, 6))
 
-        # Generate reference distributions and KDEs
-        x = jnp.linspace(-7, 10, 1000)
-        initial_kde = gaussian_kde(init_dist.sample(jr.PRNGKey(0), 100000).flatten())
-        target_kde = gaussian_kde(target_dist.sample(jr.PRNGKey(0), 100000).flatten())
+            # Generate reference distributions and KDEs
+            x = jnp.linspace(-7, 10, 1000)
+            initial_kde = gaussian_kde(init_dist.sample(jr.PRNGKey(0), 100000).flatten())
+            target_kde = gaussian_kde(target_dist.sample(jr.PRNGKey(0), 100000).flatten())
 
-        # Precompute sample KDEs for all frames
-        kde_x = jnp.linspace(-7, 10, 500)
-        frame_densities = []
-        for frame in range(K):
-            current_samples = y_seq[frame].flatten()
-            kde = gaussian_kde(current_samples)
-            frame_densities.append(kde(kde_x))
+            # Precompute sample KDEs for all frames
+            kde_x = jnp.linspace(-7, 10, 500)
+            frame_densities = []
+            for frame in range(K):
+                current_samples = y_seq[frame].flatten()
+                kde = gaussian_kde(current_samples)
+                frame_densities.append(kde(kde_x))
 
-        # Create static reference lines
-        ax.plot(kde_x, initial_kde(kde_x), 'b--', linewidth=2, label='Initial Distribution')
-        ax.plot(kde_x, target_kde(kde_x), 'g--', linewidth=2, label='Target Distribution')
+            # Create static reference lines
+            ax.plot(kde_x, initial_kde(kde_x), 'b--', linewidth=2, label='Initial Distribution')
+            ax.plot(kde_x, target_kde(kde_x), 'g--', linewidth=2, label='Target Distribution')
 
-        # Initialize animated elements
-        line, = ax.plot([], [], 'r-', linewidth=2, label='Current Samples')
-        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
-        ax.set_xlim(-7, 10)
-        ax.set_ylim(0, 0.5)
-        ax.set_xlabel('Value')
-        ax.set_ylabel('Density')
-        ax.set_title('Density Evolution During Reverse Process')
-        ax.legend(loc='upper right')
+            # Initialize animated elements
+            line, = ax.plot([], [], 'r-', linewidth=2, label='Current Samples')
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
+            ax.set_xlim(-7, 10)
+            ax.set_ylim(0, 0.5)
+            ax.set_xlabel('Value')
+            ax.set_ylabel('Density')
+            ax.set_title('Density Evolution During Reverse Process')
+            ax.legend(loc='upper right')
 
-        def animate(frame):
-            line.set_data(kde_x, frame_densities[frame])
-            time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
-            
-            return line, time_text
+            def animate(frame):
+                line.set_data(kde_x, frame_densities[frame])
+                time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
+                
+                return line, time_text
 
-        # Create animation
-        ani = animation.FuncAnimation(
-            fig=fig,
-            func=animate,
-            frames=K,
-            interval=20,
-            blit=True
-        )
+            # Create animation
+            ani = animation.FuncAnimation(
+                fig=fig,
+                func=animate,
+                frames=K,
+                interval=20,
+                blit=True
+            )
 
-        # Save animation
-        writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
-        ani_name = 'density_evolution_with_score.mp4' if add_score else 'density_evolution_without_score.mp4'
-        ani.save(ani_name, writer=writer)
+            # Save animation
+            writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
+            ani_name = 'density_evolution_with_score.mp4' if add_score else 'density_evolution_without_score.mp4'
+            ani.save(ani_name, writer=writer)
 
-        plt.close()
+            plt.close()
+        elif data_dim == 2:
+            fig, ax = plt.subplots(figsize=(10, 10))
+    
+            # Generate grid for target contour
+            x = jnp.linspace(-45, 45, 200)
+            y = jnp.linspace(-45, 45, 200)
+            X, Y = jnp.meshgrid(x, y)
+            pts = jnp.stack([X.ravel(), Y.ravel()], axis=1)
+            Z_target = target_dist.batch(pts).reshape(X.shape)
+
+            # Plot static target contour
+            ax.contour(X, Y, Z_target, levels=10, colors='green', linestyles='--', alpha=0.5, label='Target Distribution')
+
+            # Initialize animated elements
+            scatter = ax.scatter([], [], c='red', s=10, alpha=0.6, label='Samples')
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
+            ax.set_xlim(-45, 45)
+            ax.set_ylim(-45, 45)
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_title('Sample Movement During Reverse Process')
+            ax.legend(loc='upper right')
+
+            def animate(frame):
+                # Update sample positions (convert JAX array to NumPy for matplotlib)
+                current_samples = np.array(y_seq[frame])
+                scatter.set_offsets(current_samples)
+                time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
+                return scatter, time_text
+
+            # Create animation
+            ani = animation.FuncAnimation(
+                fig=fig,
+                func=animate,
+                frames=K,
+                interval=20,
+                blit=True
+            )
+
+            # Save animation
+            writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
+            ani_name = 'sample_movement_2d_with_score.mp4' if add_score else 'sample_movement_2d_without_score.mp4'
+            ani.save(ani_name, writer=writer)
+
+            plt.close()
+
 
     #############################
     # LogZ estimation
