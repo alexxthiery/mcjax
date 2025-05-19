@@ -137,6 +137,31 @@ class MixedIsotropicGauss(LogDensity):
         return x
 
 
+# ==================================
+# GMM40 Distribution
+# Reference: https://github.com/lollcat/fab-torch/blob/master/experiments/gmm/README.md
+# ===============================
+class GMM40(MixedIsotropicGauss):
+    def __init__(
+        self,
+        dim: int = 2,
+        n_mixes: int = 40,
+        loc_scaling: float = 40.0,
+        scale_scaling: float = 1.0,
+        weights: jnp.ndarray = jnp.ones(40) / 40.0,
+        seed: int = 0,
+        
+    ):
+        key = jax.random.PRNGKey(seed)
+        mean = jax.random.uniform(
+            key, shape=(n_mixes, dim), minval=-1.0, maxval=1.0
+        ) * loc_scaling  # shape (n_mixes, dim)
+
+        log_var = jnp.full((n_mixes,), 2.0 * jnp.log(scale_scaling))
+        super().__init__(mu=mean, log_var=log_var, weights=weights)
+
+
+
 
 # ==================================
 # Diagonal Gaussian Distribution
