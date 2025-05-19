@@ -469,7 +469,7 @@ if __name__ == "__main__":
 
             def animate(frame):
                 # Update sample positions (convert JAX array to NumPy for matplotlib)
-                current_samples = np.array(y_seq[frame])
+                current_samples = jnp.array(y_seq[frame])
                 scatter.set_offsets(current_samples)
                 time_text.set_text(f'Step: {frame}/{K} (Time: {K-frame}/{K})')
                 return scatter, time_text
