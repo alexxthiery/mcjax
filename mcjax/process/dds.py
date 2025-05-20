@@ -270,7 +270,7 @@ if __name__ == "__main__":
     target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     #------------------ target distribution is GMM40 ----------------- 
-    target_dist = GMM40()
+    # target_dist = GMM40()
 
     # Define the dynamic of the process
     ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
