@@ -247,7 +247,7 @@ if __name__ == "__main__":
     learning_rate = 1e-4
     batch_size = 128
     num_steps = 4000
-    data_dim = 2
+    data_dim = 1
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
     if variable_ts:
@@ -263,11 +263,11 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     #------------------ target distribution is one-dim mixed gaussian -----------------
-    # mu = jnp.array([[-2.],[0.],[2.]])
-    # dist_sigma = jnp.array([0.3, 0.3, 0.3])
-    # log_var = jnp.log(dist_sigma**2)
-    # weights = jnp.array([0.3, 0.4, 0.3])
-    # target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+    mu = jnp.array([[-2.],[0.],[2.]])
+    dist_sigma = jnp.array([0.3, 0.3, 0.3])
+    log_var = jnp.log(dist_sigma**2)
+    weights = jnp.array([0.3, 0.4, 0.3])
+    target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     #------------------ target distribution is GMM40 ----------------- 
     target_dist = GMM40()
