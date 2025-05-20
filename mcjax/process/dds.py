@@ -26,7 +26,7 @@ jax.config.update("jax_platform_name", "gpu")
 
 class MLPModel(nn.Module):
     """
-    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * \nabla log \mu(x)
+    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * nabla log(mu(x))
     Thus the output of both networks are given.
     """
     dim: int   
@@ -455,7 +455,8 @@ if __name__ == "__main__":
             Z_target = target_dist.batch(pts).reshape(X.shape)
 
             # Plot static target contour
-            ax.contour(X, Y, Z_target, levels=10, colors='green', linestyles='--', alpha=0.5, label='Target Distribution')
+            cs = ax.contour(X, Y, Z_target, levels=10, colors='green', linestyles='--', alpha=0.5)
+            cs.set_label('Target Distribution')
 
             # Initialize animated elements
             scatter = ax.scatter([], [], c='red', s=10, alpha=0.6, label='Samples')
