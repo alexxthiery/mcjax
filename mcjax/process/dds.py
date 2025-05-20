@@ -466,7 +466,7 @@ if __name__ == "__main__":
             ax.set_xlabel('X')
             ax.set_ylabel('Y')
             ax.set_title('Sample Movement During Reverse Process')
-            ax.legend(loc='upper right')
+            
 
             def animate(frame):
                 # Update sample positions (convert JAX array to NumPy for matplotlib)
