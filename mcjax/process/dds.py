@@ -455,8 +455,9 @@ if __name__ == "__main__":
             Z_target = target_dist.batch(pts).reshape(X.shape)
 
             # Plot static target contour
-            cs = ax.contour(X, Y, Z_target, levels=10, colors='green', linestyles='--', alpha=0.5)
-            cs.set_label('Target Distribution')
+            ax.contourf(X, Y, jnp.exp(Z_target),levels = 10)
+            ax.colorbar()
+
 
             # Initialize animated elements
             scatter = ax.scatter([], [], c='red', s=10, alpha=0.6, label='Samples')
