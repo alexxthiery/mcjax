@@ -455,8 +455,8 @@ if __name__ == "__main__":
             Z_target = target_dist.batch(pts).reshape(X.shape)
 
             # Plot static target contour
-            ax.contourf(X, Y, jnp.exp(Z_target),levels = 10)
-            ax.colorbar()
+            contour = ax.contourf(X, Y, jnp.exp(Z_target),levels = 10)
+            fig.colorbar(contour, ax=ax)
 
 
             # Initialize animated elements
