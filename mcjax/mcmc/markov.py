@@ -1,6 +1,15 @@
 import abc
 import jax
 import jax.random as jr
+#from dataclasses import dataclass
+from flax import struct
+from typing import Any
+
+
+@struct.dataclass
+class MCMCOutput:
+    traj: Any     # Trajectory of the state 
+    summary: Any  # Summary statistics of the trajectory
 
 
 class MarkovKernel(abc.ABC):
@@ -22,11 +31,12 @@ class MarkovKernel(abc.ABC):
         raise NotImplementedError("Subclasses must implement this method")
     
     def run(self, key, n_samples, state_init):
+        step_fn = self.step
+
         def scan_fn(carry, _):
-            """ one step of the MCMC kernel """
             key, state = carry
             key, key_ = jr.split(key)
-            state, stats = self.step(state, key_)
+            state, stats = step_fn(state, key_)  # no closure
             return (key, state), (state, stats)
         
         key, key_ = jr.split(key)
@@ -34,4 +44,8 @@ class MarkovKernel(abc.ABC):
         stats_summary = self.summarize_stats_traj(stats_traj)
         
         # merge the state_trajectory and stats_summary
-        return {**state_traj, **stats_summary}
+        # return {**state_traj, **stats_summary}
+        return MCMCOutput(
+            traj=state_traj,
+            summary=stats_summary
+        )
