@@ -11,102 +11,6 @@ from .markov import MarkovKernel
 # ========================
 # Metropolis Adjusted Langevin Algorithm
 # ========================
-# class MalaState(TypedDict):
-#     """ State storing the current state of the MALA kernel 
-#     x: current point
-#     logdensity: pdf of the proposal function Z \propto q(x,.) = N(x-\epsilon \grad(V(x)), 2\epsilon I)
-#     """
-#     x: jnp.ndarray
-#     logdensity: jnp.ndarray
-
-# class MalaStats(TypedDict):
-#     """ Stores the statistics of MALA at each step
-#     is_accept: whether the drawn z is accepted or not
-#     accept_MH: the threshold "a" in Metropolis-Hastings
-#     """
-#     is_accept: jnp.ndarray
-#     accept_MH: jnp.ndarray
-
-# class Mala(MarkovKernel):
-
-#     def __init__(self,
-#                  *,
-#                  logdensity:LogDensity,
-#                  epsilon):
-#         self.logdensity = logdensity
-#         self._dim = logdensity.dim
-#         self.epsilon = epsilon
-        
-
-#     def init_state(
-#         self,
-#         x_init: jnp.ndarray,     # initial point
-#         ) -> MalaState:
-#         """ Initialize the state of the RWM kernel """
-#         # check the dimension of the initial point
-#         assert x_init.shape == (self._dim,), "Invalid initial point"
-        
-#         state = MalaState(x=x_init, logdensity=self.logdensity(x_init))
-#         return state
-    
-#     def step(self,
-#              state:MalaState,
-#              key
-#              ) -> Tuple[MalaState,MalaStats]:
-#         """
-#         A single step of MALA sampling
-#         """
-#         # unpack the state and density function
-#         x = state['x']
-#         logtarget_current = state['logdensity']
-        
-#         # create a proposal
-#         key, key_ = jr.split(key)
-#         # \log(f(x)) \propto -V(x) 
-
-#         x_prop = x + self.epsilon*self.logdensity.grad(x) + jr.normal(key_, (self._dim,)) *jnp.sqrt(2*self.epsilon)
-#         logtarget_proposal = self.logdensity(x_prop)
-        
-#         # accept or reject
-#         key, key_ = jr.split(key)
-#         u = jr.uniform(key_)
-#         log_f_ratio = logtarget_proposal - logtarget_current
-#         log_q_ratio = (jnp.linalg.norm(x_prop - x - self.epsilon*self.logdensity.grad(x))**2 - \
-#                        jnp.linalg.norm(x - x_prop - self.epsilon*self.logdensity.grad(x_prop))**2)\
-#                         /(4*self.epsilon)
-#         accept_MH = jnp.exp(jnp.minimum(0., log_f_ratio+log_q_ratio))
-        
-        
-#         # metropolis-hastings acceptance
-#         is_accept = u < accept_MH
-#         x_new = jnp.where(is_accept, x_prop, x)
-#         logdensity_new = jnp.where(
-#                                 is_accept,
-#                                 logtarget_proposal,
-#                                 logtarget_current)
-        
-#         # create the new state
-#         state_new = MalaState(x=x_new, logdensity=logdensity_new)
-        
-#         # store the statistics
-#         statistics = MalaStats(
-#                         is_accept=is_accept,
-#                         accept_MH=accept_MH)
-#         return state_new, statistics
-    
-#     def summarize_stats_traj(
-#             self,
-#             stats_traj: MalaStats,
-#             ) -> Dict:
-#         """ Summarize the statistics of the RWM trajectory """
-#         acceptance_rate = jnp.mean(stats_traj['accept_MH'])
-#         n_accepted = jnp.sum(stats_traj['is_accept'])
-#         stats_summary = {
-#             'acceptance_rate': acceptance_rate,
-#             'n_accepted': n_accepted
-#         }
-#         return stats_summary
-
 @struct.dataclass
 class MalaState:
     x: jnp.ndarray
@@ -135,7 +39,6 @@ class Mala(MarkovKernel):
         self,
         *,
         logdensity: Callable[[jnp.ndarray], jnp.ndarray],
-        # grad_logdensity: Callable[[jnp.ndarray], jnp.ndarray],
         grad_logdensity: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
         step_size: float,
         cov: Optional[jnp.ndarray] = None,
@@ -147,8 +50,7 @@ class Mala(MarkovKernel):
             grad_logdensity: Optional callable for gradient of log-density.
             cov: Optional covariance matrix for the proposal distribution.
         """
-        # if grad_logdensity is None:
-        #     grad_logdensity = jax.grad(logdensity)
+        # define a value_and_grad function
         if grad_logdensity is None:
             self.value_and_grad = jax.value_and_grad(logdensity)
         else:
@@ -158,9 +60,9 @@ class Mala(MarkovKernel):
         self.logdensity = logdensity
         self.grad_logdensity = grad_logdensity
         self.step_size = step_size
-        self.cov = cov  # user-supplied
-        self.L = None  # Cholesky of cov
-        self.cov_inv = None  # Inverse of cov
+        self.cov = cov          # user-supplied
+        self.L = None           # Cholesky of cov
+        self.cov_inv = None     # Inverse of cov
 
     def init_state(self, x_init: jnp.ndarray) -> MalaState:
         """Initialize the MALA state from a starting point."""
@@ -196,8 +98,7 @@ class Mala(MarkovKernel):
         diffusion = jnp.sqrt(2 * eps) * (self.L @ noise)
         x_prop = x + drift + diffusion
 
-        # grad_logp_prop = self.grad_logdensity(x_prop)
-        # logtarget_proposal = self.log_density_fn(x_prop)
+        # Compute log-density and gradient at the proposal
         logtarget_proposal, grad_logp_prop = self.value_and_grad(x_prop)
 
         # MH correction
@@ -215,10 +116,8 @@ class Mala(MarkovKernel):
         is_accept = u < accept_MH
 
         x_new = jnp.where(is_accept, x_prop, x)
-        #grad_new = jnp.where(is_accept[:, None], grad_logp_prop, grad_logp_x)
         grad_new = jnp.where(is_accept, grad_logp_prop, grad_logp_x)
         logdensity_new = jnp.where(is_accept, logtarget_proposal, logtarget_current)
-
 
         new_state = MalaState(
                             x=x_new,
