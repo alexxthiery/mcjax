@@ -1,348 +1,154 @@
+from typing import Callable, Dict, Any, Tuple
+from flax import struct
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import jax.scipy
-from mcjax.proba.density import LogDensity
 
+# variational family
+from mcjax.proba.var_family import VarFamily
 # optax for optimization
 import optax
 
 
-class DoubleStochastic:
-    """ Doubly Stochastic Variational Bayes for non-Conjugate Inference
+@struct.dataclass
+class VIState:
+    params: Any
+    opt_state: optax.OptState
+    step: int
 
-    Reference:
-    ----------
-    "Doubly Stochastic Variational Bayes for non-Conjugate Inference"  
-    Titsias, M. and Lázaro-Gredilla, M., ICML 2014
+
+class DoubleStochasticVI:
     """
+    Doubly Stochastic Variational Inference (DSVI)
+
+    Supports any reparameterizable VarFamily with methods for sampling
+    and evaluating log-density.
+
+    Parameters:
+    -----------
+    logdensity : Callable[[jnp.ndarray], jnp.ndarray]
+        Log-density of the target distribution p(x). Should support batched input.
+    approx : VarFamily
+        Instance of a variational approximation (e.g., DiagGaussian, MixtureDiagGaussian).
+    sticking_the_landing : bool
+        Whether to stop gradient flow through entropy estimate for lower-variance gradient (recommended).
+    """
+
     def __init__(
-                self,
-                *,
-                logtarget: LogDensity,  # logtarget distribution
-                ):
-        self.logtarget = logtarget
-        self.dim = logtarget.dim
-
-    def run(self,
-            *,
-            key: jnp.ndarray,                   # random key
-            n_samples: int,                     # number of samples
-            n_iter: int,                        # number of iterations
-            mu_init: jnp.ndarray = None,        # initial location
-            log_std_init: jnp.ndarray = None,   # initial log standard deviation
-            cov_init: jnp.ndarray = None,       # initial covariance
-            cov_chol_init: jnp.ndarray = None,  # initial Cholesky factor of the covariance
-            adam_lr: float = 1e-3,              # learning rate for Adam
-            verbose: bool = False,              # verbose
-            store_params_trace: bool = False,   # store the trace of the parameters
-            approx_type: str = "full",          # "diag" or "full" or "mixture"
-            mixing_components: int = 10,        # number of components for the mixture
-            sticking_the_landing: bool = True,  # whether to stick the landing
-            use_jit: bool = True,               # whether to use JIT compilation
-            ):
-        # check the approx_type is valid
-        valid_approx = ["diag", "full", "mixture"]
-        error_msg = f"Invalid approx_type. \n Must be one of {valid_approx}"
-        assert approx_type in valid_approx, error_msg
+        self,
+        *,
+        logdensity: Callable[[jnp.ndarray], jnp.ndarray],
+        approx: VarFamily,
+        sticking_the_landing: bool = True,
+    ):
+        self.logdensity = logdensity
+        self.approx = approx
+        self.sticking_the_landing = sticking_the_landing
         
-        ##############################
-        # FULL COVARIANCE
-        ##############################
-        if approx_type == "full":
-            # extract initial parameters if provided
-            if mu_init is None:
-                mu_init = jnp.zeros(self.dim)
-            if cov_init is None:
-                cov_init = jnp.eye(self.dim)
-            if cov_chol_init is None:
-                cov_chol_init = jnp.linalg.cholesky(cov_init)
+        # define the batched version of the logdensity
+        self.logdensity_batch = jax.vmap(logdensity, in_axes=(0,))
 
-            # initialize the parameters
-            mu = mu_init
-            cov_chol = cov_chol_init
-            cov_chol_diag = jnp.diag(cov_chol)
-            cov_chol_lower = jnp.tril(cov_chol, k=-1)
-            params = {"mu": mu, "log_diag": jnp.log(cov_chol_diag), "cov_chol_lower": cov_chol_lower}
+    def _kl_estimate(
+        self,
+        params,
+        key: jax.Array,
+        n_samples: int,
+    ) -> jnp.ndarray:
+        """
+        Monte Carlo estimate of KL divergence KL[q || p] up to an additive constant.
 
-            def generate_samples(params, key):
-                """ generate samples from the variational distribution """
-                mu = params["mu"]
-                # cov_chol = params["cov_chol"]
-                diag = jnp.exp(params["log_diag"])
-                cov_chol = jnp.diag(diag) + jnp.tril(params["cov_chol_lower"], k=-1)
-                zs = jr.normal(key, shape=(n_samples, self.dim))
-                xs = zs @ cov_chol.T + mu[None, :]
-                # zs: samples from standard normal
-                # xs: samples from q
-                return xs, zs
-            
-            def log_q(params, xs):
-                """ log density of the variational distribution """
-                mu = params["mu"]
-                diag = jnp.exp(params["log_diag"])
-                cov_chol = jnp.diag(diag) + jnp.tril(params["cov_chol_lower"], k=-1)
-                log_Z = 0.5*self.dim*jnp.log(2*jnp.pi) + 0.5*jnp.sum(jnp.log(diag**2))
-                xs_white = jnp.linalg.solve(cov_chol, (xs - mu[None, :]).T).T
-                log_q = -0.5*jnp.sum(xs_white**2, axis=1) - log_Z
-                return log_q
+        kl = E_q[log q(x)] - E_q[logdensity(x)] + cst = - Entropy - E_q[logdensity(x)] + cst
+        """
+        xs = self.approx.sample(params, key, n_samples)
+        return self.approx.neg_elbo(
+            params=params,
+            xs=xs,
+            logdensity_batch=self.logdensity_batch,
+            stop_gradient_entropy=self.sticking_the_landing,
+            key=key,
+            n_samples=n_samples,
+        )
 
-            def clean_params(params):
-                """ post-processing after gradient update """
-                cov_chol_lower = params["cov_chol_lower"]
-                params["cov_chol_lower"] = jnp.tril(cov_chol_lower, k=-1)
-                return params
-            
-            def postprocess_params(params):
-                """ post-processing before returning the parameters to user """
-                diag = jnp.exp(params["log_diag"])
-                cov_chol = jnp.diag(diag) + jnp.tril(params["cov_chol_lower"], k=-1)
-                return {"mu": params["mu"], "cov_chol": cov_chol}
-            
-            def KL(params, key):
-                """ KL divergence between q and p with repametrization trick:
-                KL = E_q[log q/p] = -Entropy(q) - E_q[log p]
-                q is parametrized by mu and cov_chol
-                """
-                def compute_entropy(params, xs):
-                    """ compute the entropy of the variational distribution
-                    (entropy) = -E_q[log q]
-                    """
-                    # diag = jnp.exp(params["log_diag"])
-                    # cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
-                    # entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
-                    entropy = -jnp.mean(log_q(params, xs))
-                    return entropy
-            
-                # generate samples xs from q
-                key, key_ = jr.split(key)
-                xs, _ = generate_samples(params, key_)
-                
-                # compute entropy
-                if sticking_the_landing:
-                    # Reference:
-                    # "Sticking the Landing: Simple, Lower-Variance Gradient Estimators for Variational Inference"
-                    # Geoffrey Roeder, Yuhuai Wu, David Duvenaud
-                    # https://arxiv.org/abs/1703.09194
-                    params_stop = jax.lax.stop_gradient(params)
-                    entropy = compute_entropy(params_stop, xs)
-                else:
-                    entropy = compute_entropy(params, xs)
-                entropy = compute_entropy(params_stop, xs)
-                kl = -entropy - self.logtarget.batch(xs).mean()
-                return kl
-            
-        ##############################
-        # MEAN FIELD
-        ##############################
-        if approx_type == "diag":
-            # extract initial parameters if provided
-            if mu_init is None:
-                mu_init = jnp.zeros(self.dim)
-            if log_std_init is None:
-                log_std_init = jnp.zeros(self.dim)
+    def run(
+        self,
+        *,
+        key: jax.Array,
+        n_iter: int,
+        n_samples: int,
+        lr: float = 1e-3,
+        use_jit: bool = True,
+        store_params_trace: bool = False,
+        verbose: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Run variational inference optimization.
 
-            # initialize the parameters
-            params = {"mu": mu_init, "log_diag": log_std_init}
+        Parameters:
+        -----------
+        key : jax.random.PRNGKey
+            Random key for initialization and sampling.
+        n_iter : int
+            Number of optimization steps.
+        n_samples : int
+            Number of samples per iteration for Monte Carlo KL estimate.
+        lr : float
+            Learning rate for Adam optimizer.
+        use_jit : bool
+            Whether to JIT-compile the update step.
+        store_params_trace : bool
+            Whether to store the full parameter trajectory.
+        verbose : bool
+            Print KL value at each iteration.
 
-            def generate_samples(params, key):
-                """ generate samples from the variational distribution """
-                mu = params["mu"]
-                stds = jnp.exp(params["log_diag"])
-                zs = jr.normal(key, shape=(n_samples, self.dim))
-                xs = stds[None, :] * zs + mu[None, :]
-                # zs: samples from standard normal
-                # xs: samples from q
-                return xs, zs
-            
-            def log_q(params, xs):
-                """ log density of the variational distribution """
-                mu = params["mu"]
-                diag = jnp.exp(params["log_diag"])
-                log_Z = 0.5*self.dim*jnp.log(2*jnp.pi) + 0.5*jnp.sum(jnp.log(diag**2))
-                xs_white = (xs - mu[None, :]) / diag[None, :]
-                log_q = -0.5*jnp.sum(xs_white**2, axis=1) - log_Z
-                return log_q
+        Returns:
+        --------
+        dict with final parameters, KL trace, and optionally full param trace.
+        """
+        # Initialize variational parameters and optimizer
+        key_init, key_loop = jr.split(key)
+        params = self.approx.init_params(key_init)
 
-            def clean_params(params):
-                return params
-            
-            def postprocess_params(params):
-                """ post-processing before returning the parameters to user """
-                log_std = params["log_diag"]
-                return {"mu": params["mu"], "log_std": log_std}
-            
-            def KL(params, key):
-                """ KL divergence between q and p with repametrization trick:
-                KL = E_q[log q/p] = -Entropy(q) - E_q[log p]
-                q is parametrized by mu and cov_chol
-                """
-                def compute_entropy(params, xs):
-                    """ compute the entropy of the variational distribution
-                    (entropy) = -E_q[log q]
-                    """
-                    # diag = jnp.exp(params["log_diag"])
-                    # cst = 0.5*self.dim*jnp.mean(zs**2) + 0.5*self.dim*jnp.log(2*jnp.pi)
-                    # entropy = cst + 0.5*jnp.sum(jnp.log(diag**2))
-                    entropy = -jnp.mean(log_q(params, xs))
-                    return entropy
-            
-                # generate samples xs from q
-                key, key_ = jr.split(key)
-                xs, zs = generate_samples(params, key_)
-                # compute entropy
-                if sticking_the_landing:
-                    # Reference:
-                    # "Sticking the Landing: Simple, Lower-Variance Gradient Estimators for Variational Inference"
-                    # Geoffrey Roeder, Yuhuai Wu, David Duvenaud
-                    # https://arxiv.org/abs/1703.09194
-                    params_stop = jax.lax.stop_gradient(params)
-                    entropy = compute_entropy(params_stop, xs)
-                else:
-                    entropy = compute_entropy(params, xs)
-                entropy = compute_entropy(params_stop, xs)
-                kl = -entropy - self.logtarget.batch(xs).mean()
-                return kl
-            
-        ##############################
-        # MIXTURE
-        ##############################
-        if approx_type == "mixture":
-            assert mixing_components >= 2, "mixing_components must be >= 2"
-            # extract initial parameters if provided
-            if mu_init is None:
-                mu_init = jnp.zeros(self.dim)
-            if log_std_init is None:
-                log_std_init = jnp.zeros(self.dim)
-            
-            # sample K times from N(mu_init, cov_init)
-            key, key_ = jr.split(key)
-            K = mixing_components
-            zs = jr.normal(key_, shape=(K, self.dim))
-            # Compute pairwise squared distances
-            pairwise_distances_sq = jnp.sum((zs[:, None, :] - zs[None, :, :]) ** 2, axis=-1)
-            pairwise_distances = jnp.sqrt(pairwise_distances_sq)
-            M = jnp.max(pairwise_distances)
-            pairwise_distances = pairwise_distances + jnp.eye(K) * M
-            nearest_neighbor_distances = jnp.min(pairwise_distances, axis=1)
-            avg_nearest_neighbor_distance = jnp.mean(nearest_neighbor_distances)
-            mus = jnp.exp(log_std_init)*zs + mu_init[None, :]
-            log_stds = jnp.ones((K, self.dim))*log_std_init + jnp.log(avg_nearest_neighbor_distance / 2.)
-            log_alphas = jnp.log(jnp.ones(K)/K)
-            
-            # initialize the parameters
-            params = {"mus": mus, "log_stds": log_stds, "log_alphas": log_alphas}
-            
-            def generate_samples(p, key):
-                """ generate samples from the variational distribution """
-                mu = p["mu"]
-                stds = jnp.exp(p["log_diag"])
-                zs = jr.normal(key, shape=(n_samples, self.dim))
-                xs = stds[None, :] * zs + mu[None, :]
-                # zs: samples from standard normal
-                # xs: samples from q
-                return xs, zs
-                        
-            def log_q(params, xs):
-                def log_q_indiv(mu, log_std, xs):
-                    """ log density of the variational distribution """
-                    diag = jnp.exp(log_std)
-                    log_Z = 0.5*self.dim*jnp.log(2*jnp.pi) + 0.5*jnp.sum(jnp.log(diag**2))
-                    xs_white = (xs - mu[None, :]) / diag[None, :]
-                    return -0.5*jnp.sum(xs_white**2, axis=1) - log_Z
-                log_q_indiv_vmap = jax.vmap(log_q_indiv, in_axes=(0, 0, None))
-                mus = params["mus"]
-                log_stds = params["log_stds"]
-                log_alphas = params["log_alphas"]
-                alphas = jnp.exp(log_alphas)
-                alphas = alphas / jnp.sum(alphas)
-                log_alphas = jnp.log(alphas)
-                log_qs = log_q_indiv_vmap(mus, log_stds, xs)
-                return jax.nn.logsumexp(log_qs + log_alphas[:,None], axis=0)
-                
-            def clean_params(params):
-                log_alphas = params["log_alphas"]
-                alphas = jnp.exp(log_alphas)
-                alphas = alphas / jnp.sum(alphas)
-                params["log_alphas"] = jnp.log(alphas)
-                return params
-            
-            def postprocess_params(params):
-                """ post-processing before returning the parameters to user """
-                return params
-
-            def KL(params, key):
-                """ KL divergence between q and p with repametrization trick:
-                KL = E_q[log q/p] = -Entropy(q) - E_q[log p]
-                q is parametrized by mu and cov_chol
-                """
-                # extract mixture parameters
-                log_alphas = params["log_alphas"]
-                alphas = jnp.exp(log_alphas)
-                alphas = alphas / jnp.sum(alphas)
-                
-                kl_list = []
-                for k in range(K):
-                    mu = params["mus"][k]
-                    log_std = params["log_stds"][k]
-                    params_k = {"mu": mu, "log_diag": log_std}
-                    
-                    # generate samples xs from q_k
-                    key, key_ = jr.split(key)
-                    xs, _ = generate_samples(params_k, key_)
-                    if sticking_the_landing:
-                        params_stop = jax.lax.stop_gradient(params)
-                        entropy = -jnp.mean(log_q(params_stop, xs))
-                    else:
-                        entropy = -jnp.mean(log_q(params, xs))
-                    kl_list.append(alphas[k] * (-entropy - self.logtarget.batch(xs).mean()))
-                # kl = jnp.sum(alphas * kl_arr)
-                kl = jnp.sum(jnp.array(kl_list))
-                return kl
-
-        # Compute the gradient of the KL divergence
-        kl_value_and_grad = jax.value_and_grad(KL)
-
-        # optimizer
-        opt = optax.adam(adam_lr)
+        # Initialize optimizer
+        opt = optax.adam(lr)
         opt_state = opt.init(params)
+        state = VIState(params=params, opt_state=opt_state, step=0)
 
-        # update function
-        def update(params, opt_state, key):
-            kl, grad = kl_value_and_grad(params, key)
-            updates, opt_state = opt.update(grad, opt_state)
-            params = optax.apply_updates(params, updates)
-            # clean the parameters
-            # eg: ensure triangular part of the Cholesky factor is lower triangular
-            params = clean_params(params)
-            return params, kl, opt_state
+        kl_trace = []
+        params_trace = []
 
-        # JIT compilation
+        # Define update step
+        def update_fn(
+                state: VIState,
+                key: jax.Array,
+                ) -> Tuple[VIState, jnp.ndarray]:
+            kl_value_and_grads = jax.value_and_grad(self._kl_estimate)
+            kl, grads = kl_value_and_grads(state.params, key, n_samples)
+            updates, opt_state = opt.update(grads, state.opt_state)
+            new_params = optax.apply_updates(state.params, updates)
+            new_state = VIState(params=new_params,
+                                opt_state=opt_state,
+                                step=state.step + 1)
+            return new_state, kl
+
         if use_jit:
-            update = jax.jit(update)
+            update_fn = jax.jit(update_fn)
 
-        # run the optimization
-        kl_init = KL(params, key)
-        kl_trace = [kl_init]
-        params_trace = [postprocess_params(params)]
-        
-        for it in range(n_iter):
-            key, key_ = jr.split(key)
-            params, kl, opt_state = update(params, opt_state, key_)
+        # Run optimization loop
+        for i in range(n_iter):
+            key_loop, key_iter = jr.split(key_loop)
+            state, kl = update_fn(state, key_iter)
             kl_trace.append(kl)
             if store_params_trace:
-                params_trace.append(postprocess_params(params))
+                params_trace.append(self.approx.postprocess(state.params))
             if verbose:
-                print(f"iter {it}, KL: {kl:.5f}")
-        
-        output_dict = {
-            "params": postprocess_params(params),
+                print(f"iter {i:4d} | KL: {kl:.6f}")
+
+        # Final output
+        out = {
+            "params": self.approx.postprocess(state.params),
+            "params_raw": state.params,
             "kl_trace": kl_trace,
-            "approx_type": approx_type,
         }
         if store_params_trace:
-            output_dict["params_trace"] = params_trace
-            
-        return output_dict
-    
-    
+            out["params_trace"] = params_trace
+        return out
