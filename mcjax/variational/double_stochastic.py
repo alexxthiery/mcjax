@@ -63,7 +63,7 @@ class DoubleStochasticVI:
         return self.approx.neg_elbo(
             params=params,
             xs=xs,
-            logdensity_batch=self.logdensity_batch,
+            logtarget_batch=self.logdensity_batch,
             stop_gradient_entropy=self.sticking_the_landing,
             key=key,
             n_samples=n_samples,

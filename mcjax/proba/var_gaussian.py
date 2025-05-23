@@ -65,7 +65,7 @@ class DiagGaussian(VarFamily):
         std = jnp.exp(params.log_std)
         return params.mu[None, :] + eps * std[None, :]
 
-    def log_q(
+    def logdensity(
             self,
             params: DiagGaussianParams,
             xs: jnp.ndarray) -> jnp.ndarray:
@@ -174,7 +174,7 @@ class FullCovGaussian(VarFamily):
         L = self._construct_cholesky(params)
         return params.mu[None, :] + z @ L.T
 
-    def log_q(
+    def logdensity(
             self,
             params: FullCovGaussianParams,
             xs: jnp.ndarray,
@@ -316,7 +316,7 @@ class MixtureDiagGaussian(VarFamily):
 
         return jax.vmap(sample_one)(keys)  # shape (n_samples, D)
 
-    def log_q(
+    def logdensity(
             self,
             params: MixtureDiagGaussianParams,
             xs: jnp.ndarray,
@@ -324,7 +324,7 @@ class MixtureDiagGaussian(VarFamily):
         K, D = params.mus.shape
         log_weights = jax.nn.log_softmax(params.log_weights)  # (K,)
 
-        def log_q_k(mu_k, log_std_k):
+        def logdensity_k(mu_k, log_std_k):
             std_k = jnp.exp(log_std_k)
             x_centered = (xs - mu_k[None, :]) / std_k[None, :]
             log_det = jnp.sum(log_std_k)
@@ -333,8 +333,8 @@ class MixtureDiagGaussian(VarFamily):
             logp -= log_det
             return logp  # shape (N,)
 
-        log_qs = jax.vmap(log_q_k, in_axes=(0, 0))(params.mus, params.log_stds)  # (K, N)
-        return jax.nn.logsumexp(log_qs + log_weights[:, None], axis=0)  # (N,)
+        logdensities = jax.vmap(logdensity_k, in_axes=(0, 0))(params.mus, params.log_stds)  # (K, N)
+        return jax.nn.logsumexp(logdensities + log_weights[:, None], axis=0)  # (N,)
 
     def postprocess(self, params: MixtureDiagGaussianParams) -> dict:
         return {
@@ -348,7 +348,7 @@ class MixtureDiagGaussian(VarFamily):
         *,
         params: MixtureDiagGaussianParams,
         xs: Optional[jnp.ndarray] = None,  # not used in this override
-        logdensity_batch: Callable[[jnp.ndarray], jnp.ndarray],
+        logtarget_batch: Callable[[jnp.ndarray], jnp.ndarray],
         stop_gradient_entropy: bool = True,
         key: jax.Array,
         n_samples: int,
@@ -373,11 +373,11 @@ class MixtureDiagGaussian(VarFamily):
             xs_k = mu_k + eps * std_k  # shape (N, D)
 
             # Entropy term
-            log_q_k = self.log_q_batch(params if not stop_gradient_entropy else jax.lax.stop_gradient(params), xs_k)
-            entropy_k = -jnp.mean(log_q_k)
+            logdensity_k = self.logdensity_batch(params if not stop_gradient_entropy else jax.lax.stop_gradient(params), xs_k)
+            entropy_k = -jnp.mean(logdensity_k)
 
             # Cross-entropy term
-            logp_k = jnp.mean(logdensity_batch(xs_k))
+            logp_k = jnp.mean(logtarget_batch(xs_k))
 
             return alphas[k] * (-entropy_k - logp_k)  # this is KL_k
 
