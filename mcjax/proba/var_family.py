@@ -11,7 +11,7 @@ class VarFamily(abc.ABC):
     Subclasses must implement:
     - init_params: initialize variational parameters phi
     - sample: generate samples from q(x; phi)
-    - log_q: compute log-density log q(x; phi)
+    - logdensity: compute log-density log q(x; phi)
     - postprocess: convert internal params into user-facing form
     """
 
@@ -39,7 +39,7 @@ class VarFamily(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def log_q(self, params: Any, xs: jnp.ndarray) -> jnp.ndarray:
+    def logdensity(self, params: Any, xs: jnp.ndarray) -> jnp.ndarray:
         """
         Compute log q(x; phi) for a batch of xs.
         
@@ -48,11 +48,11 @@ class VarFamily(abc.ABC):
             xs: samples, shape (n_samples, dim)
         
         Returns:
-            log_q values, shape (n_samples,)
+            logdensity values, shape (n_samples,)
         """
         pass
     
-    def log_q_batch(self, params: Any, xs: jnp.ndarray) -> jnp.ndarray:
+    def logdensity_batch(self, params: Any, xs: jnp.ndarray) -> jnp.ndarray:
         """
         Compute log q(x; phi) for a batch of xs.
         
@@ -61,9 +61,9 @@ class VarFamily(abc.ABC):
             xs: samples, shape (n_samples, dim)
         
         Returns:
-            log_q values, shape (n_samples,)
+            logdensity values, shape (n_samples,)
         """
-        return jax.vmap(self.log_q, in_axes=(None, 0))(params, xs)
+        return jax.vmap(self.logdensity, in_axes=(None, 0))(params, xs)
 
     @abc.abstractmethod
     def postprocess(self, params: Any) -> dict:
@@ -78,7 +78,7 @@ class VarFamily(abc.ABC):
         *,
         params: Any,
         xs: jnp.ndarray,
-        logdensity_batch: Callable[[jnp.ndarray], jnp.ndarray],
+        logtarget_batch: Callable[[jnp.ndarray], jnp.ndarray],
         stop_gradient_entropy: bool = True,
         key: Optional[jax.Array] = None,  # Not used in this method, but kept for consistency
         n_samples: Optional[int] = 0,  # Not used in this method, but kept for consistency
@@ -98,8 +98,8 @@ class VarFamily(abc.ABC):
             Parameters of the variational approximation q(x; phi).
         xs : jnp.ndarray
             Samples drawn from q(x; phi), shape (n_samples, dim).
-        logdensity_batch : Callable
-            Function computing log p(x) over a batch of points.
+        logtarget_batch : Callable
+            Function computing log target(x) over a batch of points.
             Must accept shape (n_samples, dim) and return (n_samples,).
             Note: logdensity is only known up to an unkown additive constant
 
@@ -118,7 +118,7 @@ class VarFamily(abc.ABC):
             # use the params for the log density
             # but stop gradient flow through them
             params_to_use = jax.lax.stop_gradient(params)
-        log_q = self.log_q_batch(params_to_use, xs)
-        entropy = -jnp.mean(log_q)
-        logp = jnp.mean(logdensity_batch(xs))
-        return -entropy - logp
+        log_qs = self.logdensity_batch(params_to_use, xs)
+        entropy = -jnp.mean(log_qs)
+        logtargets = jnp.mean(logtarget_batch(xs))
+        return -entropy - logtargets
