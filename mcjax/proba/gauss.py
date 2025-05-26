@@ -8,6 +8,14 @@ from jax.scipy.linalg import solve_triangular
 from .distribution import Distribution
 from .mixture import MixtureSameFamily, MixtureSameFamilyParams
 
+
+def _forward(method_name):
+    """ helper function to forward method calls to the base distribution """
+    def wrapper(self, *args, **kwargs):
+        return getattr(self.base, method_name)(*args, **kwargs)
+    return wrapper
+
+
 #######################################
 # Diagonal Gaussian variational family
 #######################################
@@ -198,7 +206,16 @@ class GaussianDiagMixture:
     """
     dim: int
     num_components: int
+    base: MixtureSameFamily
 
+    # forward methods to base distribution
+    sample = _forward("sample")
+    log_prob = _forward("log_prob")
+    og_prob_batch = _forward("log_prob_batch")
+    log_normalization = _forward("log_normalization")
+    postprocess = _forward("postprocess")
+    neg_elbo = _forward("neg_elbo")
+    
     @classmethod
     def create(
         cls,
@@ -256,13 +273,18 @@ class GaussianDiagMixture:
         )
 
         # Instantiate mixture model
-        mixture, params = MixtureSameFamily.create(
+        base, params = MixtureSameFamily.create(
             component_cls=GaussianDiag,
             component_kwargs=dict(dim=dim),
             component_params=component_params,
             log_weights=log_weights,
         )
 
+        mixture = cls(
+            dim=dim,
+            num_components=num_components,
+            base=base
+        )
         return mixture, params
 
 
@@ -279,6 +301,15 @@ class GaussianFullMixture:
     """
     dim: int
     num_components: int
+    base: MixtureSameFamily
+
+    # forward methods to base distribution
+    sample = _forward("sample")
+    log_prob = _forward("log_prob")
+    og_prob_batch = _forward("log_prob_batch")
+    log_normalization = _forward("log_normalization")
+    postprocess = _forward("postprocess")
+    neg_elbo = _forward("neg_elbo")
 
     @classmethod
     def create(
@@ -368,11 +399,17 @@ class GaussianFullMixture:
             cov_chol_lower=cov_chol_lowers
         )
 
-        mixture, params = MixtureSameFamily.create(
+        base, params = MixtureSameFamily.create(
             component_cls=GaussianFullCov,
             component_kwargs={"dim": D},
             component_params=component_params,
             log_weights=log_weights
+        )
+        
+        mixture = cls(
+            dim=D,
+            num_components=K,
+            base=base
         )
 
         return mixture, params
