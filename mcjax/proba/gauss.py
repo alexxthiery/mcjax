@@ -5,7 +5,7 @@ import jax.random as jr
 from flax import struct
 from jax.scipy.linalg import solve_triangular
 #from .var_family import VarFamily
-from .distribution import Distribution
+from .distribution import DistributionLike, generic_neg_elbo
 from .mixture import MixtureSameFamily, MixtureSameFamilyParams
 
 
@@ -26,24 +26,30 @@ class GaussianDiagParams:
 
 
 @struct.dataclass
-class GaussianDiag(Distribution):
+class GaussianDiag:
+    """ Gaussian Distribution with diagonal covariance:
+        q(x) = N(mu, diag(exp(log_std)^2))
+        where mu is the mean vector and log_std is the log standard deviation vector.
+        
+        Follows the DistributionLike protocol.
+    """
     dim: int
 
     @classmethod
-    def create(
-        cls,
+    def create(cls, *, dim: int) -> "GaussianDiag":
+        return cls(dim=dim)
+
+    def init_params(
+        self,
         *,
-        dim: Optional[int] = None,
-        mu_init: Optional[jnp.ndarray] = None,
-        log_std_init: Optional[jnp.ndarray] = None,
-    ) -> tuple["GaussianDiag", GaussianDiagParams]:
+        mu: Optional[jnp.ndarray] = None,
+        log_std: Optional[jnp.ndarray] = None,
+    ) -> GaussianDiagParams:
         """
-        Factory method to create a GaussianDiag instance and its initialized parameters.
+        Initialize parameters for the diagonal Gaussian distribution.
 
         Parameters
         ----------
-        dim : int, optional
-            Dimensionality of the Gaussian. Can be inferred from mu_init if not provided.
         mu_init : jnp.ndarray, optional
             Initial mean vector. If not provided, defaults to zeros.
         log_std_init : jnp.ndarray, optional
@@ -51,50 +57,61 @@ class GaussianDiag(Distribution):
 
         Returns
         -------
-        model : GaussianDiag
-            The variational family object.
         params : GaussianDiagParams
             Initialized parameters for the model.
-
-        Raises
-        ------
-        ValueError
-            If neither dim nor mu_init/log_std_init are provided.
         """
-        if mu_init is not None:
-            inferred_dim = mu_init.shape[0]
-        elif log_std_init is not None:
-            inferred_dim = log_std_init.shape[0]
-        elif dim is not None:
-            inferred_dim = dim
-        else:
-            raise ValueError("Must specify at least one of dim, mu_init, or log_std_init.")
-
-        mu = mu_init if mu_init is not None else jnp.zeros(inferred_dim)
-        log_std = log_std_init if log_std_init is not None else jnp.zeros(inferred_dim)
-
-        return cls(dim=inferred_dim), GaussianDiagParams(mu=mu, log_std=log_std)
+        mu = mu if mu is not None else jnp.zeros(self.dim)
+        log_std = log_std if log_std is not None else jnp.zeros(self.dim)
+        return GaussianDiagParams(mu=mu, log_std=log_std)
 
     def sample(self, params: GaussianDiagParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
         eps = jr.normal(key, shape=(n_samples, self.dim))
         std = jnp.exp(params.log_std)
         return params.mu + eps * std
 
-    def log_prob(self, params: GaussianDiagParams, xs: jnp.ndarray) -> jnp.ndarray:
+    def log_prob(self, params: GaussianDiagParams, x: jnp.ndarray) -> jnp.ndarray:
         std = jnp.exp(params.log_std)
-        normed = (xs - params.mu) / std
+        normed = (x - params.mu) / std
         log_det_cov = 2 * jnp.sum(params.log_std)
         log_prob = -0.5 * jnp.sum(normed**2, axis=-1)
         log_prob -= 0.5 * self.dim * jnp.log(2 * jnp.pi)
         log_prob -= 0.5 * log_det_cov
         return log_prob
 
-    def log_normalization(self) -> jnp.ndarray:
+    def log_normalization(
+            self,
+            params: GaussianDiagParams, # not used, but required by DistributionLike
+    ) -> jnp.ndarray:
         # the distribution is already normalized
-        return 1.
+        return 0.
 
     def postprocess(self, params: GaussianDiagParams) -> GaussianDiagParams:
+        """Transform parameters into user-facing outputs."""
         return {"mu": params.mu, "std": jnp.exp(params.log_std)}
+
+    def neg_elbo(
+        self,
+        *,
+        params: GaussianDiagParams,
+        xs: jnp.ndarray,
+        logtarget: Callable[[jnp.ndarray], jnp.ndarray],
+        stop_gradient_entropy: bool = True,
+        key: Optional[jax.Array] = None,    # not used, kept for consistency
+        n_samples: Optional[int] = 0,       # not used, kept for consistency
+    ) -> jnp.ndarray:
+        return generic_neg_elbo(
+            dist=self,
+            params=params,
+            xs=xs,
+            logtarget=logtarget,
+            stop_gradient_entropy=stop_gradient_entropy,
+            key=key,
+            n_samples=n_samples,
+        )
+
+
+# GaussianDiag following DistributionLike protocol
+dist: DistributionLike = GaussianDiag(dim=0)
 
 ################################################
 # Full-covariance Gaussian variational family
@@ -108,7 +125,7 @@ class GaussianFullCovParams:
 
 
 @struct.dataclass
-class GaussianFullCov(Distribution):
+class GaussianFullCov:
     """
     Full-covariance Gaussian variational family:
         q(x) = N(mu, Σ), with Σ = L @ L.T
@@ -122,34 +139,27 @@ class GaussianFullCov(Distribution):
     def create(
         cls,
         *,
-        dim: Optional[int] = None,
-        mu_init: Optional[jnp.ndarray] = None,
-        cov_init: Optional[jnp.ndarray] = None,
-        log_diag_init: Optional[jnp.ndarray] = None,
-    ) -> tuple["GaussianFullCov", GaussianFullCovParams]:
-        # infer the dimension from provided initializations
-        if mu_init is not None:
-            inferred_dim = mu_init.shape[0]
-        elif log_diag_init is not None:
-            inferred_dim = log_diag_init.shape[0]
-        elif cov_init is not None:
-            inferred_dim = cov_init.shape[0]
-        elif dim is not None:
-            inferred_dim = dim
-        else:
-            raise ValueError("Must provide at least one of dim, mu_init, log_diag_init, cov_init.")
+        dim: int,
+    ) -> "GaussianFullCov":
+        return cls(dim=dim)
 
+    def init_params(
+        self,
+        mu: Optional[jnp.ndarray] = None,
+        cov: Optional[jnp.ndarray] = None,
+        log_diag: Optional[jnp.ndarray] = None,
+    ) -> tuple["GaussianFullCov", GaussianFullCovParams]:
         # initialize mu
-        mu = mu_init if mu_init is not None else jnp.zeros(inferred_dim)
+        mu = mu if mu is not None else jnp.zeros(self.dim)
 
         # initialize log_diag and cov_chol_lower
-        if cov_init is not None:
-            L = jnp.linalg.cholesky(cov_init)
+        if cov is not None:
+            L = jnp.linalg.cholesky(cov)
             log_diag = jnp.log(jnp.diag(L))
             cov_chol_lower = L - jnp.diag(jnp.diag(L))
         else:
-            log_diag = log_diag_init if log_diag_init is not None else jnp.zeros(inferred_dim)
-            cov_chol_lower = jnp.zeros((inferred_dim, inferred_dim))
+            log_diag = log_diag if log_diag is not None else jnp.zeros(self.dim)
+            cov_chol_lower = jnp.zeros((self.dim, self.dim))
 
         # create the parameters
         params = GaussianFullCovParams(
@@ -157,7 +167,7 @@ class GaussianFullCov(Distribution):
             log_diag=log_diag,
             cov_chol_lower=cov_chol_lower,
         )
-        return cls(dim=inferred_dim), params
+        return params
 
     def _construct_cholesky(self, params: GaussianFullCovParams) -> jnp.ndarray:
         """ Construct the Cholesky factor L from the parameters. """
@@ -179,9 +189,9 @@ class GaussianFullCov(Distribution):
         quad = jnp.sum(y**2, axis=-1)
         return -0.5 * quad - 0.5 * log_det_cov - 0.5 * self.dim * jnp.log(2 * jnp.pi)
 
-    def log_normalization(self) -> jnp.ndarray:
+    def log_normalization(self, params: GaussianFullCovParams) -> jnp.ndarray:
         # the distribution is already normalized
-        return 1.
+        return 0.
 
     def postprocess(self, params: GaussianFullCovParams) -> dict:
         mu = params.mu
@@ -192,6 +202,30 @@ class GaussianFullCov(Distribution):
             "cov_chol": L,
             "cov": cov,
         }
+
+    def neg_elbo(
+        self,
+        *,
+        params: GaussianFullCovParams,
+        xs: jnp.ndarray,
+        logtarget: Callable[[jnp.ndarray], jnp.ndarray],
+        stop_gradient_entropy: bool = True,
+        key: Optional[jax.Array] = None,    # not used, kept for consistency
+        n_samples: Optional[int] = 0,       # not used, kept for consistency
+    ) -> jnp.ndarray:
+        return generic_neg_elbo(
+            dist=self,
+            params=params,
+            xs=xs,
+            logtarget=logtarget,
+            stop_gradient_entropy=stop_gradient_entropy,
+            key=key,
+            n_samples=n_samples,
+        )
+
+
+# GaussianFullCov following DistributionLike protocol
+dist_full: DistributionLike = GaussianFullCov(dim=0)
 
 ################################################
 # Mixture of Diagonal Gaussians
@@ -215,17 +249,14 @@ class GaussianDiagMixture:
     log_normalization = _forward("log_normalization")
     postprocess = _forward("postprocess")
     neg_elbo = _forward("neg_elbo")
-    
+
     @classmethod
     def create(
         cls,
         *,
         dim: int,
         num_components: int,
-        mu_init: Optional[jnp.ndarray] = None,
-        log_std_init: Optional[jnp.ndarray] = None,
-        key: jax.Array,
-    ) -> Tuple["GaussianDiagMixture", MixtureSameFamilyParams]:
+    ) -> "GaussianDiagMixture":
         """
         Factory to initialize a mixture of diagonal Gaussians with spread-out components.
 
@@ -248,23 +279,43 @@ class GaussianDiagMixture:
         params : MixtureSameFamilyParams
         """
         assert num_components >= 2, "num_components must be >= 2"
-        mu_init = mu_init if mu_init is not None else jnp.zeros(dim)
-        log_std_init = log_std_init if log_std_init is not None else jnp.zeros(dim)
+
+        # Instantiate mixture model
+        base_dist = GaussianDiag.create(dim=dim)
+        base = MixtureSameFamily.create(base_dist=base_dist)
+        # dim=dim,
+        # component_cls=GaussianDiag,
+        # component_kwargs=dict(dim=dim))
+
+        return cls(
+            dim=dim,
+            num_components=num_components,
+            base=base)
+
+    def init_params(
+        self,
+        *,
+        mu: Optional[jnp.ndarray] = None,
+        log_std: Optional[jnp.ndarray] = None,
+        key: jax.Array,
+    ) -> MixtureSameFamilyParams:
+        mu_init = mu if mu is not None else jnp.zeros(self.dim)
+        log_std_init = log_std if log_std is not None else jnp.zeros(self.dim)
 
         key, key_z = jr.split(key)
 
         # Create random base for means
-        zs = jr.normal(key_z, shape=(num_components, dim))  # shape (K, D)
+        zs = jr.normal(key_z, shape=(self.num_components, self.dim))  # shape (K, D)
         base_std = jnp.exp(log_std_init)
         mus = zs * base_std[None, :] + mu_init[None, :]      # shape: (K, D)
 
         # Spread components to avoid mode collapse
         pdist_sq = jnp.sum((zs[:, None, :] - zs[None, :, :]) ** 2, axis=-1)
-        pdist = jnp.sqrt(pdist_sq + jnp.eye(num_components) * 1e6)
+        pdist = jnp.sqrt(pdist_sq + jnp.eye(self.num_components) * 1e6)
         avg_nn_dist = jnp.mean(jnp.min(pdist, axis=1))
 
-        log_stds = jnp.tile(log_std_init, (num_components, 1)) + jnp.log(avg_nn_dist / 2.)
-        log_weights = jnp.full((num_components,), -jnp.log(num_components))
+        log_stds = jnp.tile(log_std_init, (self.num_components, 1)) + jnp.log(avg_nn_dist / 2.)
+        log_weights = jnp.full((self.num_components,), -jnp.log(self.num_components))
 
         # Pack into GaussianDiagParams with batch shape
         component_params = struct.dataclass(GaussianDiagParams)(
@@ -272,20 +323,11 @@ class GaussianDiagMixture:
             log_std=log_stds
         )
 
-        # Instantiate mixture model
-        base, params = MixtureSameFamily.create(
-            component_cls=GaussianDiag,
-            component_kwargs=dict(dim=dim),
+        params = self.base.init_params(
             component_params=component_params,
-            log_weights=log_weights,
-        )
+            log_weights=log_weights)
 
-        mixture = cls(
-            dim=dim,
-            num_components=num_components,
-            base=base
-        )
-        return mixture, params
+        return params
 
 
 ################################################
@@ -315,12 +357,8 @@ class GaussianFullMixture:
     def create(
         cls,
         *,
-        dim: Optional[int] = None,
+        dim: int,
         num_components: int,
-        mu_init: Optional[jnp.ndarray] = None,
-        cov_init: Optional[jnp.ndarray] = None,
-        log_diag_init: Optional[jnp.ndarray] = None,
-        key: jax.Array,
     ) -> Tuple["GaussianFullMixture", MixtureSameFamilyParams]:
         """
         Initialize a mixture of full-covariance Gaussians.
@@ -350,29 +388,70 @@ class GaussianFullMixture:
         """
         assert num_components >= 2, "num_components must be >= 2"
 
-        # Infer dimensionality
-        if mu_init is not None:
-            D = mu_init.shape[0]
-        elif log_diag_init is not None:
-            D = log_diag_init.shape[0]
-        elif cov_init is not None:
-            D = cov_init.shape[0]
-        elif dim is not None:
-            D = dim
-        else:
-            raise ValueError("Must provide dim or one of the init tensors.")
+        base_dist = GaussianFullCov.create(dim=dim)
+        base = MixtureSameFamily.create(base_dist=base_dist)
+        # dim=dim,
+        # component_cls=GaussianFullCov,
+        # component_kwargs={"dim": dim},
 
-        K = num_components
+        mixture = cls(
+            dim=dim,
+            num_components=num_components,
+            base=base,
+        )
+
+        return mixture
+
+    def init_params(
+        self,
+        *,
+        mu: Optional[jnp.ndarray] = None,
+        cov: Optional[jnp.ndarray] = None,
+        log_diag: Optional[jnp.ndarray] = None,
+        key: jax.Array,
+    ) -> MixtureSameFamilyParams:
+        """
+        Initialize parameters for the GaussianFullMixture.
+        Parameters
+        ----------
+        mu : jnp.ndarray, optional
+            Initial mean vector. If not provided, defaults to zeros.
+        cov : jnp.ndarray, optional
+            Initial covariance matrix. If not provided, defaults to identity.
+        log_diag : jnp.ndarray, optional
+            Initial log diagonal of the covariance matrix. If not provided, defaults to zeros.
+        key : jax.Array
+            PRNG key for random sampling.
+
+        Returns
+        -------
+        params : MixtureSameFamilyParams
+            Initialized parameters for the mixture model.
+        """
+
+        D = self.dim
+        K = self.num_components
+
+        # check that if not None, they have the correct shape
+        if mu is not None:
+            if mu.ndim != 1 or mu.shape[0] != D:
+                raise ValueError(f"mu must be a 1D array of shape ({D},), got {mu.shape}")
+        if cov is not None:
+            if cov.ndim != 2 or cov.shape != (D, D):
+                raise ValueError(f"cov must be a 2D array of shape ({D}, {D}), got {cov.shape}")
+        if log_diag is not None:
+            if log_diag.ndim != 1 or log_diag.shape[0] != D:
+                raise ValueError(f"log_diag must be a 1D array of shape ({D},), got {log_diag.shape}")
 
         # Default mu and covariance init
-        mu_init = mu_init if mu_init is not None else jnp.zeros(D)
+        mu_init = mu if mu is not None else jnp.zeros(self.dim)
 
-        if cov_init is not None:
-            L = jnp.linalg.cholesky(cov_init)
+        if cov is not None:
+            L = jnp.linalg.cholesky(cov)
             log_diag = jnp.log(jnp.diag(L))
             cov_chol_lower = L - jnp.diag(jnp.diag(L))
         else:
-            log_diag = log_diag_init if log_diag_init is not None else jnp.zeros(D)
+            log_diag = log_diag if log_diag is not None else jnp.zeros(D)
             cov_chol_lower = jnp.zeros((D, D))
 
         # Construct full Cholesky matrix: L = diag(exp(log_diag)) + tril(cov_chol_lower, k=-1)
@@ -396,20 +475,10 @@ class GaussianFullMixture:
         component_params = GaussianFullCovParams(
             mu=mus,
             log_diag=log_diags,
-            cov_chol_lower=cov_chol_lowers
-        )
+            cov_chol_lower=cov_chol_lowers,)
 
-        base, params = MixtureSameFamily.create(
-            component_cls=GaussianFullCov,
-            component_kwargs={"dim": D},
+        params = self.base.init_params(
             component_params=component_params,
-            log_weights=log_weights
-        )
-        
-        mixture = cls(
-            dim=D,
-            num_components=K,
-            base=base
-        )
+            log_weights=log_weights,)
 
-        return mixture, params
+        return params
