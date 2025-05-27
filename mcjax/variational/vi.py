@@ -89,7 +89,7 @@ class VIEngine:
             Scalar KL divergence estimate.
         """
         def loss_fn(params):
-            xs = self.approx.sample(params, key, n_samples)
+            xs = self.approx.sample(params=params, key=key, n_samples=n_samples)
             return self.approx.neg_elbo(
                 params=params,
                 xs=xs,
@@ -168,7 +168,7 @@ class VIEngine:
         for i in range(n_iter):
             key_loop, key_i = jr.split(key_loop)
             state, kl = step_fn(
-                state,
+                state=state,
                 key=key_i,
                 log_prob=log_prob,
                 optimizer=optimizer,
