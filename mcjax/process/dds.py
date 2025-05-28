@@ -313,7 +313,7 @@ if __name__ == "__main__":
             return (logz_values.at[step//10].set(jnp.mean(logz)), logz_vars.at[step//10].set(jnp.var(logz)))
         
         # estimate logZ every 100 steps
-        logz_values = jax.lax.cond(
+        logz_values, logz_vars = jax.lax.cond(
             (step % 10 == 9) & (step < 5000*10),
             estimate_and_store,
             lambda _: (logz_values,logz_vars),
@@ -327,12 +327,12 @@ if __name__ == "__main__":
 
         # branch on (step % 100 == 0)
         _ = jax.lax.cond((step % 100) == 0, do_print, lambda _: None, operand=None)
-        return (state, key, logz_values), loss
+        return (state, key, logz_values, logz_vars), loss
 
     def run_training(state, key):
         logz_values = jnp.zeros(5000) # maximum step: 5000*10
         logz_vars = jnp.zeros(5000) # maximum step: 5000*10
-        (final_state, final_key, logz_values), losses = jax.lax.scan(
+        (final_state, final_key, logz_values,logz_vars), losses = jax.lax.scan(
             scan_step,
             (state, key, logz_values,logz_vars),
             jnp.arange(num_steps)
