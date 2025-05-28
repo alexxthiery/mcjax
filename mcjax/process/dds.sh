@@ -6,7 +6,7 @@
 # ----------- Network parameters -----------
 if_train=true
 model_path='model_params.pkl'
-condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term; 
+condition_term='none' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term; 
 
 # ---------- Target distribution parameters -----------
 target_dist='gmm40' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model
@@ -24,7 +24,7 @@ sigma=0.1 # Noise scale for the backward process
 # ---------- Training parameters -----------
 lr=0.001 # Learning rate
 batch_size=128 # Batch size
-num_steps=4000 # Number of steps for training
+num_steps=1000 # Number of steps for training
 if_logZ=false # calculate logZ during training
 
 
