@@ -316,7 +316,8 @@ if __name__ == "__main__":
     # Define score function 
     def score_fn(params, k, y):
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-        nn1, nn2 = model.apply(params, y, batch_t)
+        # nn1, nn2 = model.apply(params, y, batch_t)
+        nn1 = model.apply(params, y, batch_t)
         log_mu = target_dist.batch(y)
         grad_log_mu = target_dist.grad_batch(y)  
         # if condition_term == 'grad_score':
