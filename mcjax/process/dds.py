@@ -51,46 +51,38 @@ class MLPModel(nn.Module):
         
         # Combine with x
         h = jnp.concatenate([x, t_embed], axis=-1)
-        h = nn.Dense(128,
-                     kernel_init=nn.initializers.lecun_normal(),
-                     bias_init  =nn.initializers.zeros)(h)
+        h = nn.Dense(128)(h)
         h = nn.LayerNorm()(h)
         h = nn.relu(h)
         
         # Residual blocks
         for _ in range(2):
             h0 = h
-            h = nn.Dense(128,
-                     kernel_init=nn.initializers.lecun_normal(),
-                     bias_init  =nn.initializers.zeros)(h)
+            h = nn.Dense(128)(h)
             h = nn.LayerNorm()(h)
             h = nn.relu(h)
-            h = nn.Dense(128,
-                     kernel_init=nn.initializers.lecun_normal(),
-                     bias_init  =nn.initializers.zeros)(h)
+            h = nn.Dense(128)(h)
             h = h + h0
             h = nn.LayerNorm()(h)
             h = nn.relu(h)
             
-        nn1_out = nn.Dense(self.dim,
-                           kernel_init=nn.initializers.zeros,
-                           bias_init  =nn.initializers.zeros)(h)
+        nn1_out = nn.Dense(self.dim)(h)
 
-        # ========== NN2 Branch (time only) ==========
-        # Time embedding
-        t_proj_nn2 = t[:, None] * freqs[None, :]
-        t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
+        # # ========== NN2 Branch (time only) ==========
+        # # Time embedding
+        # t_proj_nn2 = t[:, None] * freqs[None, :]
+        # t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
         
-        nn2_out = nn.Sequential([
-            nn.Dense(64,
-                     kernel_init=nn.initializers.lecun_normal(),
-                     bias_init  =nn.initializers.zeros), nn.relu,
-            nn.Dense(self.dim,
-                     kernel_init=nn.initializers.lecun_normal(),
-                     bias_init  =nn.initializers.ones)
-        ])(t_emb_nn2)
+        # nn2_out = nn.Sequential([
+        #     nn.Dense(64,
+        #              kernel_init=nn.initializers.lecun_normal(),
+        #              bias_init  =nn.initializers.zeros), nn.relu,
+        #     nn.Dense(self.dim,
+        #              kernel_init=nn.initializers.lecun_normal(),
+        #              bias_init  =nn.initializers.ones)
+        # ])(t_emb_nn2)
 
-        return nn1_out, nn2_out
+        return nn1_out
     
 
 def dds_loss(params, key, ou: OU, init_dist: LogDensity,
