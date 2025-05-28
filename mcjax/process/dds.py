@@ -353,8 +353,7 @@ if __name__ == "__main__":
             logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
             return (logz_values.at[step//10].set(jnp.mean(logz)), logz_vars.at[step//10].set(jnp.var(logz)))
         
-        # estimate logZ every 100 steps
-
+        # estimate logZ every 10 steps
         logz_values, logz_vars = jax.lax.cond(
             (step % 10 == 9) & (step < 5000*10) & if_logZ,
             estimate_and_store,
