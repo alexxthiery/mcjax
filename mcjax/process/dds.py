@@ -85,7 +85,7 @@ class MLPModel(nn.Module):
             nn.Dense(64,
                      kernel_init=nn.initializers.lecun_normal(),
                      bias_init  =nn.initializers.zeros), nn.relu,
-            nn.Dense(64,
+            nn.Dense(self.dim,
                      kernel_init=nn.initializers.lecun_normal(),
                      bias_init  =nn.initializers.ones)
         ])(t_emb_nn2)
@@ -309,8 +309,8 @@ if __name__ == "__main__":
     key = jr.PRNGKey(0)
 
     key, key_ = jr.split(key)
-    dummy_x = jnp.zeros((batch_size, data_dim))
-    dummy_t = jnp.zeros((batch_size,), dtype=jnp.int32)
+    dummy_x = jnp.zeros((1, data_dim))
+    dummy_t = jnp.zeros((1,), dtype=jnp.int32)
     params = model.init(key_, dummy_x, dummy_t)
 
     # optimizer initialization  
