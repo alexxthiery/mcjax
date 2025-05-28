@@ -315,13 +315,13 @@ if __name__ == "__main__":
         grad_log_mu = target_dist.grad_batch(y)  
         if condition_term == 'grad_score':
             # Normalize the feature
-            g = grad_log_mu
-            # g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
+            # g = grad_log_mu
+            g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
             result = nn1 + nn2 * g  
         elif condition_term == 'score':
             # Normalize the feature
-            g = log_mu
-            # g = log_mu / (jnp.std(log_mu, axis=0, keepdims=True) + 1e-5)
+            # g = log_mu
+            g = log_mu / (jnp.std(log_mu, axis=0, keepdims=True) + 1e-5)
             result = nn1 + nn2 * g
         elif condition_term == 'none':
             result = nn1 
