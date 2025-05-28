@@ -232,7 +232,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_path', type=str, default='model_params.pkl')
     parser.add_argument('--if_animation', type=str2bool, default=False)
     parser.add_argument('--add_score', type=str2bool, default=False) # True if adding the score term(with zero mean) in loss function
-    parser.add_argument('--variable_ts', type=str2bool, default=False) # True if using variable (i.e. non-equidistant timesteps) for the diffusion process  
+    parser.add_argument('--variable_ts', type=str2bool, default=False) # True if using variable (i.e. non-equidistant) timesteps for the diffusion process  
 
     args = parser.parse_args()
     
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     learning_rate = 1e-4
     batch_size = 128
     num_steps = 4000
-    data_dim = 1
+    data_dim = 2
 
     timesteps = jnp.arange(K, dtype=jnp.float32)
     if variable_ts:
@@ -263,14 +263,14 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     #------------------ target distribution is one-dim mixed gaussian -----------------
-    mu = jnp.array([[-2.],[0.],[2.]])
-    dist_sigma = jnp.array([0.3, 0.3, 0.3])
-    log_var = jnp.log(dist_sigma**2)
-    weights = jnp.array([0.3, 0.4, 0.3])
-    target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+    # mu = jnp.array([[-2.],[0.],[2.]])
+    # dist_sigma = jnp.array([0.3, 0.3, 0.3])
+    # log_var = jnp.log(dist_sigma**2)
+    # weights = jnp.array([0.3, 0.4, 0.3])
+    # target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
     #------------------ target distribution is GMM40 ----------------- 
-    # target_dist = GMM40()
+    target_dist = GMM40()
 
     # Define the dynamic of the process
     ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
@@ -303,20 +303,20 @@ if __name__ == "__main__":
         return result
 
     def scan_step(carry, step):
-        state, key, logz_values = carry
+        state, key, logz_values, logz_vars = carry
         key, key_ = jr.split(key)
         state, loss = train_step(state, key_, ou, init_dist, target_dist, score_fn, batch_size, add_score)
 
         def estimate_and_store(_):
             key_logz, _ = jr.split(key)
             logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
-            return logz_values.at[step//10].set(jnp.var(logz))
+            return (logz_values.at[step//10].set(logz), logz_vars.at[step//10].set(jnp.var(logz)))
         
         # estimate logZ every 100 steps
         logz_values = jax.lax.cond(
             (step % 10 == 9) & (step < 5000*10),
             estimate_and_store,
-            lambda _: logz_values,
+            lambda _: (logz_values,logz_vars),
             operand=None
         )
 
@@ -331,6 +331,7 @@ if __name__ == "__main__":
 
     def run_training(state, key):
         logz_values = jnp.zeros(5000) # maximum step: 5000*10
+        logz_vars = jnp.zeros(5000) # maximum step: 5000*10
         (final_state, final_key, logz_values), losses = jax.lax.scan(
             scan_step,
             (state, key, logz_values),
@@ -354,7 +355,7 @@ if __name__ == "__main__":
         plt.savefig(fig_name)
         plt.close()
 
-        # plot the logZ variance at each 100 steps
+        # plot the logZ variance at each 10 steps
         plt.figure()
         plt.plot(10 + jnp.arange(num_steps//10)*10, logz_variances[:num_steps//10], label='logZ Variance')
         plt.xlabel('Training Step')
