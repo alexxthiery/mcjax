@@ -291,11 +291,11 @@ if __name__ == "__main__":
     if variable_ts:
         beta_start, beta_end = 0.1, 20.0
         beta = beta_start + (beta_end - beta_start) * (timesteps / (K - 1))
-        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
     else:
         # beta all set to 1/2
         beta = jnp.ones(K) * 0.5
-        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
+    
+    alpha = 1.0 - jnp.exp(-2.0 * beta / K)
 
     # Define the initial distribution of reference process
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
