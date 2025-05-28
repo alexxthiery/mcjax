@@ -51,22 +51,30 @@ class MLPModel(nn.Module):
         
         # Combine with x
         h = jnp.concatenate([x, t_embed], axis=-1)
-        h = nn.Dense(128)(h)
+        h = nn.Dense(128,
+                     kernel_init=nn.initializers.lecun_normal(),
+                     bias_init  =nn.initializers.zeros)(h)
         h = nn.LayerNorm()(h)
         h = nn.relu(h)
         
         # Residual blocks
         for _ in range(2):
             h0 = h
-            h = nn.Dense(128)(h)
+            h = nn.Dense(128,
+                     kernel_init=nn.initializers.lecun_normal(),
+                     bias_init  =nn.initializers.zeros)(h)
             h = nn.LayerNorm()(h)
             h = nn.relu(h)
-            h = nn.Dense(128)(h)
+            h = nn.Dense(128,
+                     kernel_init=nn.initializers.lecun_normal(),
+                     bias_init  =nn.initializers.zeros)(h)
             h = h + h0
             h = nn.LayerNorm()(h)
             h = nn.relu(h)
             
-        nn1_out = nn.Dense(self.dim)(h)
+        nn1_out = nn.Dense(self.dim,
+                           kernel_init=nn.initializers.zeros,
+                           bias_init  =nn.initializers.zeros)(h)
 
         # ========== NN2 Branch (time only) ==========
         # Time embedding
@@ -74,8 +82,12 @@ class MLPModel(nn.Module):
         t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
         
         nn2_out = nn.Sequential([
-            nn.Dense(64), nn.relu,
-            nn.Dense(self.dim)  
+            nn.Dense(64,
+                     kernel_init=nn.initializers.lecun_normal(),
+                     bias_init  =nn.initializers.zeros), nn.relu,
+            nn.Dense(64,
+                     kernel_init=nn.initializers.lecun_normal(),
+                     bias_init  =nn.initializers.ones)
         ])(t_emb_nn2)
 
         return nn1_out, nn2_out
@@ -241,6 +253,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-3) # learning rate
     parser.add_argument('--batch_size', type=int, default=128) # batch size
     parser.add_argument('--num_steps', type=int, default=4000) # number of training steps
+    parser.add_argument('--if_logZ', type=str2bool, default=False) # whether to estimate logZ during training
 
 
     args = parser.parse_args()
@@ -258,6 +271,7 @@ if __name__ == "__main__":
     learning_rate = args.lr
     batch_size = args.batch_size
     num_steps = args.num_steps
+    if_logZ = args.if_logZ
 
     # -------------- Set up the OU process and target distribution --------------
     if target == 'gmm40':
@@ -340,8 +354,9 @@ if __name__ == "__main__":
             return (logz_values.at[step//10].set(jnp.mean(logz)), logz_vars.at[step//10].set(jnp.var(logz)))
         
         # estimate logZ every 100 steps
+
         logz_values, logz_vars = jax.lax.cond(
-            (step % 10 == 9) & (step < 5000*10),
+            (step % 10 == 9) & (step < 5000*10) & if_logZ,
             estimate_and_store,
             lambda _: (logz_values,logz_vars),
             operand=None
@@ -383,27 +398,28 @@ if __name__ == "__main__":
         plt.close()
 
         # plot the logZ variance at each 10 steps
-        fig, ax1 = plt.subplots()
-        x = 10 + jnp.arange(num_steps//10)*10
-        ax1.plot(x, logz_variances[:num_steps//10], label='logZ Variance', color='blue')
-        ax1.set_xlabel('Training Step')
-        ax1.set_ylabel('logZ Variance', color='blue')
-        ax1.tick_params(axis='y', labelcolor='blue')
+        if if_logZ:
+            fig, ax1 = plt.subplots()
+            x = 10 + jnp.arange(num_steps//10)*10
+            ax1.plot(x, logz_variances[:num_steps//10], label='logZ Variance', color='blue')
+            ax1.set_xlabel('Training Step')
+            ax1.set_ylabel('logZ Variance', color='blue')
+            ax1.tick_params(axis='y', labelcolor='blue')
 
-        ax2 = ax1.twinx()
-        ax2.plot(x, logz_values[:num_steps//10], label='logZ Value', color='orange')
-        ax2.set_ylabel('logZ Value', color='orange')
-        ax2.tick_params(axis='y', labelcolor='orange')
+            ax2 = ax1.twinx()
+            ax2.plot(x, logz_values[:num_steps//10], label='logZ Value', color='orange')
+            ax2.set_ylabel('logZ Value', color='orange')
+            ax2.tick_params(axis='y', labelcolor='orange')
 
-        lines, labels = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines + lines2, labels + labels2, loc='upper right')
+            lines, labels = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines + lines2, labels + labels2, loc='upper right')
 
-        plt.title('Variance of logZ Estimates During Training')
-        fig_name = 'logz_with_score.png' if add_score else 'logz_without_score.png'
-        plt.tight_layout()
-        plt.savefig(fig_name) 
-        plt.close()
+            plt.title('Variance of logZ Estimates During Training')
+            fig_name = 'logz_with_score.png' if add_score else 'logz_without_score.png'
+            plt.tight_layout()
+            plt.savefig(fig_name) 
+            plt.close()
 
         # Save the model parameters
         params = state.params
