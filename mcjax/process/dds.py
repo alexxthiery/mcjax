@@ -310,7 +310,7 @@ if __name__ == "__main__":
         def estimate_and_store(_):
             key_logz, _ = jr.split(key)
             logz = estimate_logZ(state.params, key_logz, ou, init_dist, target_dist, score_fn, 1000)
-            return (logz_values.at[step//10].set(logz), logz_vars.at[step//10].set(jnp.var(logz)))
+            return (logz_values.at[step//10].set(jnp.mean(logz)), logz_vars.at[step//10].set(jnp.var(logz)))
         
         # estimate logZ every 100 steps
         logz_values = jax.lax.cond(
