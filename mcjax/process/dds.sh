@@ -9,7 +9,7 @@ model_path='model_params.pkl'
 condition_term='none' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term; 
 
 # ---------- Target distribution parameters -----------
-target_dist='gmm40' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model
+target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model
 
 
 # ----------- Loss parameters -----------
