@@ -334,16 +334,16 @@ if __name__ == "__main__":
         logz_vars = jnp.zeros(5000) # maximum step: 5000*10
         (final_state, final_key, logz_values), losses = jax.lax.scan(
             scan_step,
-            (state, key, logz_values),
+            (state, key, logz_values,logz_vars),
             jnp.arange(num_steps)
         )
-        return final_state, final_key, losses, logz_values
+        return final_state, final_key, losses, logz_values,logz_vars
 
 
     # Training loop
     if if_train:
         key, key_ = jr.split(key)
-        state, key, losses,logz_variances = run_training(state, key_)
+        state, key, losses,logz_values, logz_variances = run_training(state, key_)
 
         # Plot the loss curve
         plt.plot(losses, label='Loss')
@@ -356,13 +356,25 @@ if __name__ == "__main__":
         plt.close()
 
         # plot the logZ variance at each 10 steps
-        plt.figure()
-        plt.plot(10 + jnp.arange(num_steps//10)*10, logz_variances[:num_steps//10], label='logZ Variance')
-        plt.xlabel('Training Step')
-        plt.ylabel('logZ Variance')
-        plt.legend()
+        fig, ax1 = plt.subplots()
+        x = 10 + jnp.arange(num_steps//10)*10
+        ax1.plot(x, logz_variances[:num_steps//10], label='logZ Variance', color='blue')
+        ax1.set_xlabel('Training Step')
+        ax1.set_ylabel('logZ Variance', color='blue')
+        ax1.tick_params(axis='y', labelcolor='blue')
+
+        ax2 = ax1.twinx()
+        ax2.plot(x, logz_values[:num_steps//10], label='logZ Value', color='orange')
+        ax2.set_ylabel('logZ Value', color='orange')
+        ax2.tick_params(axis='y', labelcolor='orange')
+
+        lines, labels = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines + lines2, labels + labels2, loc='upper right')
+
         plt.title('Variance of logZ Estimates During Training')
-        fig_name = 'logz_variance_with_score.png' if add_score else 'logz_variance_without_score.png'
+        fig_name = 'logz_with_score.png' if add_score else 'logz_without_score.png'
+        plt.tight_layout()
         plt.savefig(fig_name) 
         plt.close()
 
