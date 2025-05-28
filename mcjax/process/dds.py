@@ -238,6 +238,7 @@ if __name__ == "__main__":
     parser.add_argument('--variable_ts', type=str2bool, default=False) # True if using variable (i.e. non-equidistant) timesteps for the diffusion process  
     parser.add_argument('--K', type=int, default=2000) # number of diffusion steps
     parser.add_argument('--sigma', type=float, default=1.0) # sigma of the OU process
+    parser.add_argument('--lr', type=float, default=1e-3) # learning rate
     parser.add_argument('--batch_size', type=int, default=128) # batch size
     parser.add_argument('--num_steps', type=int, default=4000) # number of training steps
 
