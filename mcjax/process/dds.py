@@ -309,8 +309,8 @@ if __name__ == "__main__":
     key = jr.PRNGKey(0)
 
     key, key_ = jr.split(key)
-    dummy_x = jnp.zeros((1, data_dim))
-    dummy_t = jnp.zeros((1,), dtype=jnp.int32)
+    dummy_x = jnp.zeros((batch_size, data_dim))
+    dummy_t = jnp.zeros((batch_size,), dtype=jnp.int32)
     params = model.init(key_, dummy_x, dummy_t)
 
     # optimizer initialization  
@@ -327,20 +327,21 @@ if __name__ == "__main__":
         nn1, nn2 = model.apply(params, y, batch_t)
         log_mu = target_dist.batch(y)
         grad_log_mu = target_dist.grad_batch(y)  
-        if condition_term == 'grad_score':
-            # Normalize the feature
-            # g = grad_log_mu
-            g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
-            result = nn1 + nn2 * g  
-        elif condition_term == 'score':
-            # Normalize the feature
-            # g = log_mu
-            g = log_mu / (jnp.std(log_mu, axis=0, keepdims=True) + 1e-5)
-            result = nn1 + nn2 * g
-        elif condition_term == 'none':
-            result = nn1 
-        else:
-            raise ValueError(f"Unknown condition term: {condition_term}")
+        # if condition_term == 'grad_score':
+        #     # Normalize the feature
+        #     # g = grad_log_mu
+        #     g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
+        #     result = nn1 + nn2 * g  
+        # elif condition_term == 'score':
+        #     # Normalize the feature
+        #     # g = log_mu
+        #     g = log_mu / (jnp.std(log_mu, axis=0, keepdims=True) + 1e-5)
+        #     result = nn1 + nn2 * g
+        # elif condition_term == 'none':
+        #     result = nn1 
+        # else:
+        #     raise ValueError(f"Unknown condition term: {condition_term}")
+        result=nn1
         return result
 
     def scan_step(carry, step):
