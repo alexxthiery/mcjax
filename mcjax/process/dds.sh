@@ -24,7 +24,7 @@ sigma=0.1 # Noise scale for the backward process
 # ---------- Training parameters -----------
 lr=0.001 # Learning rate
 batch_size=128 # Batch size
-num_steps=4000 # Number of steps for training
+num_steps=1000 # Number of steps for training
 
 python dds.py \
   --if_train $if_train \
