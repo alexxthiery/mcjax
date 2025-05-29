@@ -319,11 +319,11 @@ class GaussianDiagMixture:
         mus = zs * base_std[None, :] + mu_init[None, :]      # shape: (K, D)
 
         # Spread components to avoid mode collapse
-        pdist_sq = jnp.sum((zs[:, None, :] - zs[None, :, :]) ** 2, axis=-1)
-        pdist = jnp.sqrt(pdist_sq + jnp.eye(self.num_components) * 1e6)
-        avg_nn_dist = jnp.mean(jnp.min(pdist, axis=1))
+        # pdist_sq = jnp.sum((zs[:, None, :] - zs[None, :, :]) ** 2, axis=-1)
+        # pdist = jnp.sqrt(pdist_sq + jnp.eye(self.num_components) * 1e6)
+        # avg_nn_dist = jnp.mean(jnp.min(pdist, axis=1))
 
-        log_stds = jnp.tile(log_std_init, (self.num_components, 1)) + jnp.log(avg_nn_dist / 2.)
+        log_stds = jnp.tile(log_std_init, (self.num_components, 1)) # + jnp.log(avg_nn_dist / 2.)
         log_weights = jnp.full((self.num_components,), -jnp.log(self.num_components))
 
         # Pack into GaussianDiagParams with batch shape
