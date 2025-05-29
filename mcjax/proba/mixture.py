@@ -153,9 +153,9 @@ class MixtureSameFamily:
         params: MixtureSameFamilyParams,
         xs: Optional[jnp.ndarray],
         logtarget: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool,
         key: jax.Array,
         n_samples: int,
+        stop_gradient_entropy: bool = True,
     ) -> jnp.ndarray:
         logtarget_batch = jax.vmap(logtarget)
         log_weights = jax.nn.log_softmax(params.log_weights)
