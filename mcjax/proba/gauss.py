@@ -41,7 +41,6 @@ class GaussianDiag:
 
     def init_params(
         self,
-        *,
         mu: Optional[jnp.ndarray] = None,
         log_std: Optional[jnp.ndarray] = None,
     ) -> GaussianDiagParams:
@@ -91,7 +90,6 @@ class GaussianDiag:
 
     def neg_elbo(
         self,
-        *,
         params: GaussianDiagParams,
         xs: jnp.ndarray,
         logtarget: Callable[[jnp.ndarray], jnp.ndarray],
@@ -138,7 +136,6 @@ class GaussianFullCov:
     @classmethod
     def create(
         cls,
-        *,
         dim: int,
     ) -> "GaussianFullCov":
         return cls(dim=dim)
@@ -161,6 +158,14 @@ class GaussianFullCov:
             log_diag = log_diag if log_diag is not None else jnp.zeros(self.dim)
             cov_chol_lower = jnp.zeros((self.dim, self.dim))
 
+        # check shapes
+        if mu.ndim != 1 or mu.shape[0] != self.dim:
+            raise ValueError(f"mu must be a 1D array of shape ({self.dim},), got {mu.shape}")
+        if log_diag.ndim != 1 or log_diag.shape[0] != self.dim:
+            raise ValueError(f"log_diag must be a 1D array of shape ({self.dim},), got {log_diag.shape}")
+        if cov_chol_lower.ndim != 2 or cov_chol_lower.shape != (self.dim, self.dim):
+            raise ValueError(f"cov_chol_lower must be a 2D array of shape ({self.dim}, {self.dim}), got {cov_chol_lower.shape}")
+
         # create the parameters
         params = GaussianFullCovParams(
             mu=mu,
@@ -180,10 +185,14 @@ class GaussianFullCov:
         L = self._construct_cholesky(params)
         return params.mu + z @ L.T
 
-    def log_prob(self, params: GaussianFullCovParams, xs: jnp.ndarray) -> jnp.ndarray:
+    def log_prob(self, params: GaussianFullCovParams, x: jnp.ndarray) -> jnp.ndarray:
+        # assert the input x has the correct shape
+        assert x.ndim == 1 and x.shape[0] == self.dim, \
+            f"x must be a 1D array of shape ({self.dim},), got {x.shape}"
+            
         mu = params.mu
         L = self._construct_cholesky(params)
-        xs_centered = xs - mu
+        xs_centered = x - mu
         y = solve_triangular(L, xs_centered.T, lower=True).T
         log_det_cov = 2*jnp.sum(params.log_diag)
         quad = jnp.sum(y**2, axis=-1)
@@ -205,7 +214,6 @@ class GaussianFullCov:
 
     def neg_elbo(
         self,
-        *,
         params: GaussianFullCovParams,
         xs: jnp.ndarray,
         logtarget: Callable[[jnp.ndarray], jnp.ndarray],
@@ -253,7 +261,6 @@ class GaussianDiagMixture:
     @classmethod
     def create(
         cls,
-        *,
         dim: int,
         num_components: int,
     ) -> "GaussianDiagMixture":
@@ -283,9 +290,6 @@ class GaussianDiagMixture:
         # Instantiate mixture model
         base_dist = GaussianDiag.create(dim=dim)
         base = MixtureSameFamily.create(base_dist=base_dist)
-        # dim=dim,
-        # component_cls=GaussianDiag,
-        # component_kwargs=dict(dim=dim))
 
         return cls(
             dim=dim,
@@ -294,13 +298,18 @@ class GaussianDiagMixture:
 
     def init_params(
         self,
-        *,
+        key: jax.Array,
         mu: Optional[jnp.ndarray] = None,
         log_std: Optional[jnp.ndarray] = None,
-        key: jax.Array,
     ) -> MixtureSameFamilyParams:
         mu_init = mu if mu is not None else jnp.zeros(self.dim)
         log_std_init = log_std if log_std is not None else jnp.zeros(self.dim)
+        
+        # assert shapes
+        if mu_init.ndim != 1 or mu_init.shape[0] != self.dim:
+            raise ValueError(f"mu_init must be a 1D array of shape ({self.dim},), got {mu_init.shape}")
+        if log_std_init.ndim != 1 or log_std_init.shape[0] != self.dim:
+            raise ValueError(f"log_std_init must be a 1D array of shape ({self.dim},), got {log_std_init.shape}")
 
         key, key_z = jr.split(key)
 
@@ -356,7 +365,6 @@ class GaussianFullMixture:
     @classmethod
     def create(
         cls,
-        *,
         dim: int,
         num_components: int,
     ) -> Tuple["GaussianFullMixture", MixtureSameFamilyParams]:
@@ -390,9 +398,6 @@ class GaussianFullMixture:
 
         base_dist = GaussianFullCov.create(dim=dim)
         base = MixtureSameFamily.create(base_dist=base_dist)
-        # dim=dim,
-        # component_cls=GaussianFullCov,
-        # component_kwargs={"dim": dim},
 
         mixture = cls(
             dim=dim,
@@ -404,11 +409,10 @@ class GaussianFullMixture:
 
     def init_params(
         self,
-        *,
+        key: jax.Array,
         mu: Optional[jnp.ndarray] = None,
         cov: Optional[jnp.ndarray] = None,
         log_diag: Optional[jnp.ndarray] = None,
-        key: jax.Array,
     ) -> MixtureSameFamilyParams:
         """
         Initialize parameters for the GaussianFullMixture.
