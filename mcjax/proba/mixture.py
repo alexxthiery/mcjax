@@ -48,7 +48,6 @@ class MixtureSameFamily:
     @classmethod
     def create(
         cls,
-        *,
         base_dist: DistributionLike,
     ) -> "MixtureSameFamily":
         """
@@ -72,7 +71,6 @@ class MixtureSameFamily:
 
     def init_params(
         self,
-        *,
         component_params: Any,
         log_weights: jnp.ndarray,
     ) -> MixtureSameFamilyParams:
@@ -102,7 +100,7 @@ class MixtureSameFamily:
                     )
         return params
 
-    def sample(self, *, params: MixtureSameFamilyParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
+    def sample(self, params: MixtureSameFamilyParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
         key_cat, key_sample = jax.random.split(key)
 
         # Sample component indices: (n_samples,)
@@ -152,7 +150,6 @@ class MixtureSameFamily:
 
     def neg_elbo(
         self,
-        *,
         params: MixtureSameFamilyParams,
         xs: Optional[jnp.ndarray],
         logtarget: Callable[[jnp.ndarray], jnp.ndarray],

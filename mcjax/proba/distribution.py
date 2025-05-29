@@ -80,7 +80,6 @@ class DistributionLike(Protocol):
 
 def generic_neg_elbo(
     dist: DistributionLike,
-    *,
     params: Any,
     xs: jnp.ndarray,
     logtarget: Callable[[jnp.ndarray], jnp.ndarray],
@@ -88,6 +87,10 @@ def generic_neg_elbo(
     key: Optional[jax.Array] = None,    # not used, kept for consistency
     n_samples: Optional[int] = 0,       # not used, kept for consistency
 ) -> jnp.ndarray:
+    # assert the shape of xs is compatible with the distribution
+    assert xs.ndim == 2 and xs.shape[1] == dist.dim, \
+        f"Expected xs to have shape (n_samples, {dist.dim}), got {xs.shape}"
+
     log_q_batch = jax.vmap(dist.log_prob, in_axes=(None, 0))
     log_p_batch = jax.vmap(logtarget)
 

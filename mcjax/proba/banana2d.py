@@ -36,17 +36,17 @@ class Banana2D:
         params = Banana2DParams(noise_std=noise_std)
         return params
 
-    def log_prob(self, *, params: Banana2DParams, x: jnp.ndarray) -> jnp.ndarray:
+    def log_prob(self, params: Banana2DParams, x: jnp.ndarray) -> jnp.ndarray:
         x0, x1 = x[0], x[1]
         out = -0.5*((x0 - 1.)**2 + (x1 - x0**2)**2 / params.noise_std**2)
         out += -0.5*jnp.log(2*jnp.pi) - 0.5*jnp.log(2*jnp.pi*params.noise_std**2)
         return out
     
-    def log_prob_only(self, *, params: Banana2DParams) -> Callable[[jnp.ndarray], jnp.ndarray]:
+    def log_prob_only(self, params: Banana2DParams) -> Callable[[jnp.ndarray], jnp.ndarray]:
         """ Return a function that computes the log probability density """
         return lambda x: self.log_prob(params=params, x=x)
 
-    def sample(self, *, params: Banana2DParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
+    def sample(self, params: Banana2DParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
         # samples x0_s
         key, key_ = jr.split(key)
         x0_s = 1. + jr.normal(key_, (n_samples,))
@@ -55,12 +55,12 @@ class Banana2D:
         x1_s = x0_s**2 + params.noise_std * jr.normal(key_, (n_samples,))
         return jnp.stack([x0_s, x1_s], axis=-1)
 
-    def log_normalization(self, *, params: Banana2DParams) -> float:
+    def log_normalization(self, params: Banana2DParams) -> float:
         """ log partition function """
         # it is already normalized
         return 0.
 
-    def postprocess(self, *, params: Banana2DParams) -> dict:
+    def postprocess(self, params: Banana2DParams) -> dict:
         """Transform internal parameters into user-facing outputs."""
         return {
             "noise_std": params.noise_std,
@@ -68,7 +68,6 @@ class Banana2D:
 
     def neg_elbo(
         self,
-        *,
         params: Banana2DParams,
         xs: jnp.ndarray,
         log_target: Callable[[jnp.ndarray], jnp.ndarray],

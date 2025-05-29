@@ -42,23 +42,27 @@ class NealFunnel:
         assert sigma_x > 0, "sigma_x must be positive"
         return NealFunnelParams(sigma_x=sigma_x)
 
-    def log_prob(self, *, params: NealFunnelParams, x: jnp.ndarray) -> jnp.ndarray:
+    def log_prob(self, params: NealFunnelParams, x: jnp.ndarray) -> jnp.ndarray:
         """ Compute log probability density log q(x; params) """
+        # assert the shape
+        assert x.ndim == 1 and x.shape[0] == self.dim, \
+            f"Expected x to be 1D with shape ({self.dim},), got {x.shape}"
+            
         std_x = params.sigma_x
         dim = self.dim
 
         x0, x1 = x[0], x[1:]
         std = jnp.exp(x0/2.)
-        out = -0.5 * (x0/std_x)**2 - 0.5 * jnp.sum(x1/std)**2
+        out = -0.5 * (x0/std_x)**2 - 0.5 * jnp.sum((x1/std)**2)
         out += -0.5 * (dim-1) * jnp.log(2 * jnp.pi * std**2)
         out += -0.5 * jnp.log(2 * jnp.pi * std_x**2)
         return out
 
-    def log_prob_only(self, *, params: NealFunnelParams) -> Callable[[jnp.ndarray], jnp.ndarray]:
+    def log_prob_only(self, params: NealFunnelParams) -> Callable[[jnp.ndarray], jnp.ndarray]:
         """ Return a function that computes the log probability density """
         return lambda x: self.log_prob(params=params, x=x)
 
-    def sample(self, *, params: NealFunnelParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
+    def sample(self, params: NealFunnelParams, key: jax.Array, n_samples: int) -> jnp.ndarray:
         # samples x0_s
         key, key_ = jr.split(key)
         std_x = params.sigma_x
@@ -66,15 +70,15 @@ class NealFunnel:
         # samples x1_s
         key, key_ = jr.split(key)
         stds = jnp.exp(x0_s/2.)
-        x1_s = stds * jr.normal(key_, (n_samples, self.dim-1))
+        x1_s = stds[:, None] * jr.normal(key_, (n_samples, self.dim-1))
         return jnp.concatenate([x0_s, x1_s], axis=1)
 
-    def log_normalization(self, *, params: NealFunnelParams) -> float:
+    def log_normalization(self, params: NealFunnelParams) -> float:
         """ log partition function """
         # it is already normalized
         return 0.
 
-    def postprocess(self, *, params: NealFunnelParams) -> dict:
+    def postprocess(self, params: NealFunnelParams) -> dict:
         """Transform internal parameters into user-facing outputs."""
         return {
             "sigma_x": params.sigma_x,
@@ -82,7 +86,6 @@ class NealFunnel:
 
     def neg_elbo(
         self,
-        *,
         params: NealFunnelParams,
         xs: jnp.ndarray,
         log_target: Callable[[jnp.ndarray], jnp.ndarray],
