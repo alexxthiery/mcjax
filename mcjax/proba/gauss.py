@@ -101,17 +101,12 @@ class GaussianDiag:
     def neg_elbo(
         self,
         params: GaussianDiagParams,
-        xs: jnp.ndarray,
         logtarget: Callable[[jnp.ndarray], jnp.ndarray],
         stop_gradient_entropy: bool = True,
+        xs: jnp.ndarray = None,  # not used, kept for consistency
         key: Optional[jax.Array] = None,    # not used, kept for consistency
         n_samples: Optional[int] = None,       # not used, kept for consistency
     ) -> jnp.ndarray:
-        if key is not None:
-            raise ValueError("key argument must be None in this method")
-        if n_samples not in (None, 0):
-            raise ValueError("n_samples must be None in this method")
-
         return generic_neg_elbo(
             dist=self,
             params=params,
