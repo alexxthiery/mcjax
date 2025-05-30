@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from mcjax.proba.density import LogDensity
 from mcjax.proba.student import Student
-from mcjax.proba.gaussian import Gauss
+from mcjax.proba.gaussian_old import Gauss
 from mcjax.util.weights import ess_log_weight
 from mcjax.util.log_sums import log_mean_exp_batch
 
