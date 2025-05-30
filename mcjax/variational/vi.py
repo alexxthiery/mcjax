@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 from flax import struct
+from jax import lax
 
 
 @struct.dataclass
@@ -160,7 +161,7 @@ class VIEngine:
         if jit:
             static_argnames = ["log_prob", "optimizer", "n_samples", "stop_gradient_entropy"]
             step_fn = jax.jit(self.step, static_argnames=static_argnames)
-            
+
         kl_trace = []
         param_trace = []
         key_loop = key

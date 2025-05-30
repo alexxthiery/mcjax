@@ -4,7 +4,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from flax import struct
 from jax.scipy.linalg import solve_triangular
-#from .var_family import VarFamily
 from .distribution import DistributionLike, generic_neg_elbo
 from .mixture import MixtureSameFamily, MixtureSameFamilyParams
 
@@ -59,6 +58,11 @@ class GaussianDiag:
         params : GaussianDiagParams
             Initialized parameters for the model.
         """
+        if mu is not None and mu.shape != (self.dim,):
+            raise ValueError(f"mu must have shape ({self.dim},), got {mu.shape}")
+        if log_std is not None and log_std.shape != (self.dim,):
+            raise ValueError(f"log_std must have shape ({self.dim},), got {log_std.shape}")
+
         mu = mu if mu is not None else jnp.zeros(self.dim)
         log_std = log_std if log_std is not None else jnp.zeros(self.dim)
         return GaussianDiagParams(mu=mu, log_std=log_std)
@@ -69,6 +73,9 @@ class GaussianDiag:
         return params.mu + eps * std
 
     def log_prob(self, params: GaussianDiagParams, x: jnp.ndarray) -> jnp.ndarray:
+        assert x.ndim == 1 and x.shape[0] == self.dim, \
+            f"x must be a 1D array of shape ({self.dim},), got {x.shape}"
+
         std = jnp.exp(params.log_std)
         normed = (x - params.mu) / std
         log_det_cov = 2 * jnp.sum(params.log_std)
@@ -86,7 +93,10 @@ class GaussianDiag:
 
     def postprocess(self, params: GaussianDiagParams) -> GaussianDiagParams:
         """Transform parameters into user-facing outputs."""
-        return {"mu": params.mu, "std": jnp.exp(params.log_std)}
+        return {
+            "mu": jnp.asarray(params.mu),
+            "std": jnp.exp(jnp.asarray(params.log_std))
+        }
 
     def neg_elbo(
         self,
@@ -95,8 +105,13 @@ class GaussianDiag:
         logtarget: Callable[[jnp.ndarray], jnp.ndarray],
         stop_gradient_entropy: bool = True,
         key: Optional[jax.Array] = None,    # not used, kept for consistency
-        n_samples: Optional[int] = 0,       # not used, kept for consistency
+        n_samples: Optional[int] = None,       # not used, kept for consistency
     ) -> jnp.ndarray:
+        if key is not None:
+            raise ValueError("key argument must be None in this method")
+        if n_samples not in (None, 0):
+            raise ValueError("n_samples must be None in this method")
+
         return generic_neg_elbo(
             dist=self,
             params=params,
