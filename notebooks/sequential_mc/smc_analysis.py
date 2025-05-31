@@ -154,7 +154,7 @@ coefs = jnp.arange(N+1)/N
 
 # --------------------------- Test With Funnel target ---------------------------
 dim = 2
-mu_0 = jnp.zeros(dim)
+mu_0 = jnp.zeros(dim)-5
 sigma_0 = 10.
 log_var_0 = jnp.log(sigma_0**2)
 log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
