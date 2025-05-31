@@ -15,7 +15,7 @@ import sys
 sys.path.append('../../')
 
 from mcjax.smc.geometric_smc import GeometricSMC
-from mcjax.proba.gaussian import IsotropicGauss
+from mcjax.proba.gaussian import IsotropicGauss,GMM40
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.student import Student
 from mcjax.proba.banana2d import Banana2D
@@ -150,7 +150,19 @@ coefs = jnp.arange(N+1)/N
 # smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Gaussian')
 
 # --------------------------- Test With Funnel target ---------------------------
-# dim = 2
+dim = 2
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+log_gamma_0 = GMM40()
+log_gamma_T = NealFunnel(dim=dim)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
+
+# dim = 10
 # mu_0 = jnp.zeros(dim)
 # sigma_0 = 1.
 # log_var_0 = jnp.log(sigma_0**2)
@@ -160,17 +172,6 @@ coefs = jnp.arange(N+1)/N
 # smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
 # key, key_ = jr.split(key)
 # smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
-
-dim = 10
-mu_0 = jnp.zeros(dim)
-sigma_0 = 1.
-log_var_0 = jnp.log(sigma_0**2)
-log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-log_gamma_T = NealFunnel(dim=dim)
-key, key_ = jr.split(key)
-smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
-key, key_ = jr.split(key)
-smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
 # dim = 50
 # mu_0 = jnp.zeros(dim)
