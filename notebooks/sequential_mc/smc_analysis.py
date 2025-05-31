@@ -67,7 +67,7 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     # plot boxplot of logZ with confidence interval and mean
     plt.figure()
     positions = np.arange(len(num_particles_arr))
-    diff = jnp.abs(data1["logZ"][-1] - (log_gamma_T._log_Z - log_gamma_0._log_Z)).item()
+    diff = jnp.abs(jnp.mean(data1["logZ"][-1]) - (log_gamma_T._log_Z - log_gamma_0._log_Z))
     plt.boxplot(data1["logZ"], positions=positions, showmeans=True, meanline=True, notch=True, showfliers=False, whiskerprops=dict(color='orange'))
 
     # compare to logZ of funnel distribution
