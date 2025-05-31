@@ -85,6 +85,7 @@ class MixedIsotropicGauss(LogDensity):
         self.num_components = mu.shape[0]
         self.sigma = jnp.exp(0.5*self.log_var)
         self._dim = mu.shape[1]
+        self._log_Z = 0.
 
     def logdensity(self, x):
         '''
@@ -159,6 +160,7 @@ class GMM40(MixedIsotropicGauss):
 
         log_var = jnp.full((n_mixes,), 2.0 * jnp.log(scale_scaling))
         super().__init__(mu=mean, log_var=log_var, weights=weights)
+
 
 
 
