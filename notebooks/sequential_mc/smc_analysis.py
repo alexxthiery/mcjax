@@ -67,10 +67,11 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     # plot boxplot of logZ with confidence interval and mean
     plt.figure()
     positions = np.arange(len(num_particles_arr))
+    diff = jnp.abs(data1["logZ"][-1] - (log_gamma_T._log_Z - log_gamma_0._log_Z))
     plt.boxplot(data1["logZ"], positions=positions, showmeans=True, meanline=True, notch=True, showfliers=False, whiskerprops=dict(color='orange'))
 
     # compare to logZ of funnel distribution
-    plt.axhline(y=log_gamma_T._log_Z - log_gamma_0._log_Z, color='r', linestyle='--', label='True logZ')
+    plt.axhline(y=log_gamma_T._log_Z - log_gamma_0._log_Z, color='r', linestyle='--', label=f'True logZ (difference = {diff:.2f})')
 
     plt.xticks(positions, num_particles_arr)
     plt.xlabel('Number of particles')
@@ -159,7 +160,7 @@ log_var_0 = jnp.log(sigma_0**2)
 # log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 # ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
 key, key1, key2, key3 = jr.split(key,4)
-K = 20
+K = 40
 mu = jax.random.normal(key1, shape=(K, dim))*10-10
 dist_sigma = jax.random.uniform(
     key2,
