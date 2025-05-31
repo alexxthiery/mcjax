@@ -159,7 +159,7 @@ log_var_0 = jnp.log(sigma_0**2)
 # log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
 # ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
 key, key1, key2, key3 = jr.split(key,4)
-K = 5
+K = 20
 mu = jax.random.normal(key1, shape=(K, dim))
 dist_sigma = jax.random.uniform(
     key2,
@@ -183,7 +183,7 @@ log_var_0 = jnp.log(sigma_0**2)
 # log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0) # one component
 # ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
 key, key1, key2, key3 = jr.split(key,4)
-K = 5
+K = 20
 mu = jax.random.normal(key1, shape=(K, dim))
 dist_sigma = jax.random.uniform(
     key2,
