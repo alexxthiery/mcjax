@@ -12,13 +12,15 @@ from scipy.special import logsumexp
 # add ../mcjax to the path
 import os
 import sys
+sys.path.append(os.getcwd())
 sys.path.append('../../')
 
 from mcjax.smc.geometric_smc import GeometricSMC
-from mcjax.proba.gaussian import IsotropicGauss,GMM40
+from mcjax.proba.gaussian import IsotropicGauss,GMM40,MixedIsotropicGauss
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.student import Student
 from mcjax.proba.banana2d import Banana2D
+
 
 print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
@@ -54,7 +56,7 @@ def compute_variance(GSMC:GeometricSMC, key, num_particles, method,num_run):
     return mean, variance
 
 def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
-    dim = log_gamma_0._dim
+    dim = log_gamma_T._dim
     data1 = {"N_arr": num_particles_arr, "logZ": []}
     for num_particles in num_particles_arr:
         GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
@@ -65,10 +67,11 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
     # plot boxplot of logZ with confidence interval and mean
     plt.figure()
     positions = np.arange(len(num_particles_arr))
+    diff = jnp.abs(jnp.mean(data1["logZ"][-1]) - (log_gamma_T._log_Z - log_gamma_0._log_Z))
     plt.boxplot(data1["logZ"], positions=positions, showmeans=True, meanline=True, notch=True, showfliers=False, whiskerprops=dict(color='orange'))
 
     # compare to logZ of funnel distribution
-    plt.axhline(y=log_gamma_T._log_Z - log_gamma_0._log_Z, color='r', linestyle='--', label='True logZ')
+    plt.axhline(y=log_gamma_T._log_Z - log_gamma_0._log_Z, color='r', linestyle='--', label=f'True logZ (difference = {diff:.2f})')
 
     plt.xticks(positions, num_particles_arr)
     plt.xlabel('Number of particles')
@@ -83,7 +86,7 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
 
 
 key = jr.key(0)
-num_particles_arr = [50000]
+num_particles_arr = [10000,30000, 50000]
 num_run = 200
 N = 10
 coefs = jnp.arange(N+1)/N
@@ -151,11 +154,24 @@ coefs = jnp.arange(N+1)/N
 
 # --------------------------- Test With Funnel target ---------------------------
 dim = 2
-mu_0 = jnp.zeros(dim)
-sigma_0 = 1.
+mu_0 = jnp.zeros(dim)-5
+sigma_0 = 10.
 log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-log_gamma_0 = GMM40()
+log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+# ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
+# key, key1, key2, key3 = jr.split(key,4)
+# K = 40
+# mu = jax.random.normal(key1, shape=(K, dim))*10-10
+# dist_sigma = jax.random.uniform(
+#     key2,
+#     shape=(K,),
+#     minval=0.1,
+#     maxval=1.0
+# )
+# log_var = jnp.log(dist_sigma ** 2)
+# weights = jax.random.dirichlet(key3, alpha=jnp.ones((K,)))
+# log_gamma_0 = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+
 log_gamma_T = NealFunnel(dim=dim)
 key, key_ = jr.split(key)
 smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
@@ -166,7 +182,21 @@ smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', targe
 # mu_0 = jnp.zeros(dim)
 # sigma_0 = 1.
 # log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
+# # log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0) # one component
+# # ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
+# key, key1, key2, key3 = jr.split(key,4)
+# K = 40
+# mu = jax.random.normal(key1, shape=(K, dim))*10-10
+# dist_sigma = jax.random.uniform(
+#     key2,
+#     shape=(K,),
+#     minval=0.1,
+#     maxval=1.0
+# )
+# log_var = jnp.log(dist_sigma ** 2)
+# weights = jax.random.dirichlet(key3, alpha=jnp.ones((K,)))
+# log_gamma_0 = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+
 # log_gamma_T = NealFunnel(dim=dim)
 # key, key_ = jr.split(key)
 # smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
