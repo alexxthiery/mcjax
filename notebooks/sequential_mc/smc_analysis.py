@@ -160,7 +160,7 @@ log_var_0 = jnp.log(sigma_0**2)
 # ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
 key, key1, key2, key3 = jr.split(key,4)
 K = 20
-mu = jax.random.normal(key1, shape=(K, dim))
+mu = jax.random.normal(key1, shape=(K, dim))*10-10
 dist_sigma = jax.random.uniform(
     key2,
     shape=(K,),
@@ -176,30 +176,30 @@ smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target
 key, key_ = jr.split(key)
 smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
-dim = 10
-mu_0 = jnp.zeros(dim)
-sigma_0 = 1.
-log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0) # one component
-# ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
-key, key1, key2, key3 = jr.split(key,4)
-K = 20
-mu = jax.random.normal(key1, shape=(K, dim))
-dist_sigma = jax.random.uniform(
-    key2,
-    shape=(K,),
-    minval=0.1,
-    maxval=1.0
-)
-log_var = jnp.log(dist_sigma ** 2)
-weights = jax.random.dirichlet(key3, alpha=jnp.ones((K,)))
-log_gamma_0 = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+# dim = 10
+# mu_0 = jnp.zeros(dim)
+# sigma_0 = 1.
+# log_var_0 = jnp.log(sigma_0**2)
+# # log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0) # one component
+# # ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
+# key, key1, key2, key3 = jr.split(key,4)
+# K = 20
+# mu = jax.random.normal(key1, shape=(K, dim))*10-10
+# dist_sigma = jax.random.uniform(
+#     key2,
+#     shape=(K,),
+#     minval=0.1,
+#     maxval=1.0
+# )
+# log_var = jnp.log(dist_sigma ** 2)
+# weights = jax.random.dirichlet(key3, alpha=jnp.ones((K,)))
+# log_gamma_0 = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 
-log_gamma_T = NealFunnel(dim=dim)
-key, key_ = jr.split(key)
-smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
-key, key_ = jr.split(key)
-smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
+# log_gamma_T = NealFunnel(dim=dim)
+# key, key_ = jr.split(key)
+# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
+# key, key_ = jr.split(key)
+# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
 # dim = 50
 # mu_0 = jnp.zeros(dim)
