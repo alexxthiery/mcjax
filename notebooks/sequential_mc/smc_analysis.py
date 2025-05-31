@@ -12,13 +12,14 @@ from scipy.special import logsumexp
 # add ../mcjax to the path
 import os
 import sys
-sys.path.append('../../')
+sys.path.append(os.getcwd())
 
 from mcjax.smc.geometric_smc import GeometricSMC
-from mcjax.proba.gaussian import IsotropicGauss,GMM40
+from mcjax.proba.gaussian import IsotropicGauss,GMM40,MixedIsotropicGauss
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.student import Student
 from mcjax.proba.banana2d import Banana2D
+
 
 print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
@@ -54,7 +55,7 @@ def compute_variance(GSMC:GeometricSMC, key, num_particles, method,num_run):
     return mean, variance
 
 def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
-    dim = log_gamma_0._dim
+    dim = log_gamma_T._dim
     data1 = {"N_arr": num_particles_arr, "logZ": []}
     for num_particles in num_particles_arr:
         GSMC = GeometricSMC(log_gamma_0= log_gamma_0, log_gamma_T= log_gamma_T, coefs=coefs, \
@@ -83,7 +84,7 @@ def smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key, method, target):
 
 
 key = jr.key(0)
-num_particles_arr = [50000]
+num_particles_arr = [10000,30000, 50000]
 num_run = 200
 N = 10
 coefs = jnp.arange(N+1)/N
@@ -155,23 +156,49 @@ mu_0 = jnp.zeros(dim)
 sigma_0 = 1.
 log_var_0 = jnp.log(sigma_0**2)
 # log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-log_gamma_0 = GMM40()
+# ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
+key, key1, key2, key3 = jr.split(key,4)
+K = 5
+mu = jax.random.normal(key1, shape=(K, dim))
+dist_sigma = jax.random.uniform(
+    key2,
+    shape=(K,),
+    minval=0.1,
+    maxval=1.0
+)
+log_var = jnp.log(dist_sigma ** 2)
+weights = jax.random.dirichlet(key3, alpha=jnp.ones((K,)))
+log_gamma_0 = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
 log_gamma_T = NealFunnel(dim=dim)
 key, key_ = jr.split(key)
 smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
 key, key_ = jr.split(key)
 smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
-# dim = 10
-# mu_0 = jnp.zeros(dim)
-# sigma_0 = 1.
-# log_var_0 = jnp.log(sigma_0**2)
-# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0)
-# log_gamma_T = NealFunnel(dim=dim)
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
-# key, key_ = jr.split(key)
-# smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
+dim = 10
+mu_0 = jnp.zeros(dim)
+sigma_0 = 1.
+log_var_0 = jnp.log(sigma_0**2)
+# log_gamma_0 = IsotropicGauss(mu=mu_0, log_var=log_var_0) # one component
+# ------------------ Randomly select params for 5 components of mixed gaussian --------------------------
+key, key1, key2, key3 = jr.split(key,4)
+K = 5
+mu = jax.random.normal(key1, shape=(K, dim))
+dist_sigma = jax.random.uniform(
+    key2,
+    shape=(K,),
+    minval=0.1,
+    maxval=1.0
+)
+log_var = jnp.log(dist_sigma ** 2)
+weights = jax.random.dirichlet(key3, alpha=jnp.ones((K,)))
+log_gamma_0 = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
+
+log_gamma_T = NealFunnel(dim=dim)
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='RWM', target='Funnel')
+key, key_ = jr.split(key)
+smc_test(log_gamma_0, log_gamma_T, num_particles_arr, key_, method='MALA', target='Funnel')
 
 # dim = 50
 # mu_0 = jnp.zeros(dim)
