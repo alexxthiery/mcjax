@@ -26,17 +26,17 @@ class IsotropicGauss(LogDensity):
         self.log_var = log_var
         self.sigma = jnp.exp(0.5*self.log_var)
         self._dim = len(mu)
-        logdet = self.dim*self.log_var
-        self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+        self.logdet = self.dim*self.log_var
+        self._log_Z = 0.
 
     def logdensity(self, x):
-        return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma)) 
+        return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma)) - 0.5 * self.dim * jnp.log(2 * jnp.pi) - 0.5*self.logdet
     
     def batch(
             self,
             x_batch,   # (B, D): B batch size, D dimension
             ):
-        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1)  
+        return -0.5 * jnp.sum(jnp.square((x_batch - self.mu[None, :]) / self.sigma), axis=-1) - 0.5 * self.dim * jnp.log(2 * jnp.pi) - 0.5*self.logdet 
     
     def grad(self, x):
         return -(x - self.mu) / self.sigma**2
