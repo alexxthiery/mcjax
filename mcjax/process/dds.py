@@ -68,21 +68,17 @@ class MLPModel(nn.Module):
             
         nn1_out = nn.Dense(self.dim)(h)
 
-        # # ========== NN2 Branch (time only) ==========
-        # # Time embedding
-        # t_proj_nn2 = t[:, None] * freqs[None, :]
-        # t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
+        # ========== NN2 Branch (time only) ==========
+        # Time embedding
+        t_proj_nn2 = t[:, None] * freqs[None, :]
+        t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
         
-        # nn2_out = nn.Sequential([
-        #     nn.Dense(64,
-        #              kernel_init=nn.initializers.lecun_normal(),
-        #              bias_init  =nn.initializers.zeros), nn.relu,
-        #     nn.Dense(self.dim,
-        #              kernel_init=nn.initializers.lecun_normal(),
-        #              bias_init  =nn.initializers.ones)
-        # ])(t_emb_nn2)
+        nn2_out = nn.Sequential([
+            nn.Dense(64), nn.relu,
+            nn.Dense(self.dim)
+        ])(t_emb_nn2)
 
-        return nn1_out
+        return nn1_out, nn2_out
     
 
 def dds_loss(params, key, ou: OU, init_dist: LogDensity,
@@ -316,24 +312,22 @@ if __name__ == "__main__":
     # Define score function 
     def score_fn(params, k, y):
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-        # nn1, nn2 = model.apply(params, y, batch_t)
-        nn1 = model.apply(params, y, batch_t)
+        nn1, nn2 = model.apply(params, y, batch_t)
+        # nn1 = model.apply(params, y, batch_t)
         log_mu = target_dist.batch(y)
         grad_log_mu = target_dist.grad_batch(y)  
-        # if condition_term == 'grad_score':
-        #     # Normalize the feature
-        #     # g = grad_log_mu
-        #     g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
-        #     result = nn1 + nn2 * g  
-        # elif condition_term == 'score':
-        #     # Normalize the feature
-        #     # g = log_mu
-        #     g = log_mu / (jnp.std(log_mu, axis=0, keepdims=True) + 1e-5)
-        #     result = nn1 + nn2 * g
-        # elif condition_term == 'none':
-        #     result = nn1 
-        # else:
-        #     raise ValueError(f"Unknown condition term: {condition_term}")
+        if condition_term == 'grad_score':
+            # Normalize the feature
+            g = grad_log_mu / (jnp.std(grad_log_mu, axis=0, keepdims=True) + 1e-5) 
+            result = nn1 + nn2 * g  
+        elif condition_term == 'score':
+            # Normalize the feature
+            g = log_mu / (jnp.std(log_mu, axis=0, keepdims=True) + 1e-5)
+            result = nn1 + nn2 * g
+        elif condition_term == 'none':
+            result = nn1 
+        else:
+            raise ValueError(f"Unknown condition term: {condition_term}")
         result=nn1
         return result
 

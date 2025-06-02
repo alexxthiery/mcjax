@@ -6,7 +6,7 @@
 # ----------- Network parameters -----------
 if_train=true
 model_path='model_params.pkl'
-condition_term='none' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term; 
+condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term; 
 
 # ---------- Target distribution parameters -----------
 target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model
@@ -17,9 +17,9 @@ if_animation=true # Generate animation of the backward process
 add_score=true # Add score term to the loss function
 
 # ----------- Process parameters -----------
-variable_ts=false # Use variable time steps
+variable_ts=true # Use variable time steps
 K=2000 # Number of steps in the process
-sigma=0.1 # Noise scale for the backward process
+sigma=1.0 # Noise scale for the backward process
 
 # ---------- Training parameters -----------
 lr=0.0001 # Learning rate
