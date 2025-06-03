@@ -38,12 +38,12 @@ class Trainer:
 
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_wrapper, argnums=0),
-            static_argnums=(1,2,3,4,5) 
+            static_argnums=(0,3,4,5,6,7) 
         )
 
         self.train_step = jax.jit(
             self._train_step,
-            static_argnums=(1,2,3,4,5,6,7) 
+            static_argnums=(0,3,4,5,6,7,8,9) 
         )
 
     def _loss_wrapper(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):

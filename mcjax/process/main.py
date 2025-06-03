@@ -126,4 +126,6 @@ def main():
 
 
 if __name__ == "__main__":
+    print(f"Available devices: {jax.devices()}")
+    jax.config.update("jax_platform_name", "gpu")
     main()
