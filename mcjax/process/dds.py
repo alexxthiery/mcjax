@@ -20,66 +20,11 @@ sys.path.append('../../')
 from mcjax.proba.density import LogDensity
 from mcjax.process.ou import OU
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
+from mcjax.process.models import MLPModel
 
 print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
 
-class MLPModel(nn.Module):
-    """
-    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * nabla log(mu(x))
-    Thus the output of both networks are given.
-    """
-    dim: int   
-    T: int      # total number of diffusion steps
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray, t: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        # Shared time embedding components
-        half_dim = 32
-        emb_scale = jnp.log(10000.0) / (half_dim - 1)
-        freqs = jnp.exp(jnp.arange(half_dim) * -emb_scale)
-        
-        # ========== NN1 Branch (x + time) ==========
-        # Time embedding
-        t_proj = t[:, None] * freqs[None, :]
-        t_emb = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)
-        
-        t_embed = nn.Sequential([
-            nn.Dense(64), nn.relu,
-            nn.Dense(256), nn.relu
-        ])(t_emb)
-        
-        # Combine with x
-        h = jnp.concatenate([x, t_embed], axis=-1)
-        h = nn.Dense(128)(h)
-        h = nn.LayerNorm()(h)
-        h = nn.relu(h)
-        
-        # Residual blocks
-        for _ in range(2):
-            h0 = h
-            h = nn.Dense(128)(h)
-            h = nn.LayerNorm()(h)
-            h = nn.relu(h)
-            h = nn.Dense(128)(h)
-            h = h + h0
-            h = nn.LayerNorm()(h)
-            h = nn.relu(h)
-            
-        nn1_out = nn.Dense(self.dim)(h)
-
-        # ========== NN2 Branch (time only) ==========
-        # Time embedding
-        t_proj_nn2 = t[:, None] * freqs[None, :]
-        t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
-        
-        nn2_out = nn.Sequential([
-            nn.Dense(64), nn.relu,
-            nn.Dense(self.dim)
-        ])(t_emb_nn2)
-
-        return nn1_out, nn2_out
-    
 
 def dds_loss(params, key, ou: OU, init_dist: LogDensity,
              target_dist: LogDensity, score_fn, batch_size: int, add_score: bool):
@@ -304,7 +249,7 @@ if __name__ == "__main__":
     # optimizer initialization  
     optimizer = optax.adam(learning_rate)
     state = train_state.TrainState.create(
-        apply_fn=model.apply,
+        apply_fn=model.apply_fn,
         params=params,
         tx=optimizer
     )
@@ -312,8 +257,7 @@ if __name__ == "__main__":
     # Define score function 
     def score_fn(params, k, y):
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-        nn1, nn2 = model.apply(params, y, batch_t)
-        # nn1 = model.apply(params, y, batch_t)
+        nn1, nn2 = model.apply_fn(params, y, batch_t)
         log_mu = target_dist.batch(y)
         grad_log_mu = target_dist.grad_batch(y)  
         if condition_term == 'grad_score':
