@@ -104,30 +104,13 @@ class Trainer:
         )
         return final_state, final_key, losses, logz_vals, logz_vars
 
-
 class IDEMTrainer:
     """
-    Trainer for iDEM (Iterated Denoising Energy Matching), handling both
-    outer sampling loops (to populate the replay buffer) and inner
-    gradient‐descent loops (to train the score network via the IDEMLoss).
-
-    On init, we provide:
-      - buffer:      a replay buffer instance (algorithm.buffer)
-      - process:     the OU process (algorithm.ou)
-      - init_dist:   the initial/reference distribution (algorithm.init_dist)
-      - target_dist: the target distribution (algorithm.target_dist)
-      - score_fn:    the score network function (algorithm.score_fn)
-      - loss_obj:    an IDEMLoss instance (algorithm.loss_obj)
-      - state:       a Flax TrainState containing .params and .opt_state
-      - batch_size:  mini‐batch size for inner loop
-      - outer_iters: number of outer sampling loops
-      - inner_iters: number of gradient steps per outer iteration
-      - num_samples_per_outer: how many new x₀’s to generate each outer iteration
-      - if_logZ:     whether to compute logZ estimates (Boolean)
+    Trainer for iDEM, with inner loop jax.lax.scan over gradient steps.
     """
 
     def __init__(self,
-                 buffer,
+                 algorithm,
                  process,
                  init_dist,
                  target_dist,
@@ -139,7 +122,7 @@ class IDEMTrainer:
                  inner_iters: int,
                  num_samples_per_outer: int,
                  if_logZ: bool = False):
-        self.buffer = buffer
+        self.alg = algorithm
         self.process = process
         self.init_dist = init_dist
         self.target_dist = target_dist
@@ -153,7 +136,6 @@ class IDEMTrainer:
         self.num_samples_per_outer = num_samples_per_outer
 
         self.if_logZ = if_logZ
-        # We will store logZ statistics per outer iteration if requested
         if if_logZ:
             self.logZ_means = jnp.zeros((outer_iters,))
             self.logZ_vars = jnp.zeros((outer_iters,))
@@ -161,7 +143,9 @@ class IDEMTrainer:
             self.logZ_means = None
             self.logZ_vars = None
 
-        # Build jitted loss-and-grad and train-step for inner loop
+        self.buffer = algorithm.buffer
+
+        # JIT‐compile (loss + grad) and train_step for one inner update
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_wrapper, argnums=0),
             static_argnums=(2, 3, 4, 5)
@@ -172,9 +156,6 @@ class IDEMTrainer:
         )
 
     def _loss_wrapper(self, params, key, buffer, target_dist, score_fn, batch_size):
-        """
-        Simply calls the IDEMLoss with the correct signature.
-        """
         return self.loss_obj(
             params=params,
             key=key,
@@ -185,65 +166,85 @@ class IDEMTrainer:
         )
 
     def _train_step(self, state, key, buffer, target_dist, score_fn, batch_size):
-        """
-        One step of gradient descent on the IDEMLoss. Returns (new_state, loss).
-        """
-        params = state.params
         (loss, grads) = self.loss_and_grad(
-            params, key, buffer, target_dist, score_fn, batch_size
+            state.params, key, buffer, target_dist, score_fn, batch_size
         )
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
     def run(self, rng_key):
         """
-        Runs `num_steps` of inner‐loop training with jax.lax.scan.
-        Returns: (final_state, final_key, loss_history, logZ_means, logZ_vars).
+        Outer loop remains a Python for‐loop (to allow buffer.add),
+        while the inner gradient‐descent loop is implemented via jax.lax.scan.
+        Returns (final_state, final_key, all_losses, logZ_means, logZ_vars).
         """
-        def scan_body(carry, step):
-            state, key, logz_means, logz_vars = carry
-            key, sub = jr.split(key)
+        key = rng_key
+        all_losses = []
 
-            state, loss = self.train_step(
-                state, sub,
-                self.buffer, self.target_dist, self.score_fn, self.batch_size
+        for outer in range(self.outer_iters):
+            # ─── Outer iteration: sample new x₀ and update buffer ───────────────
+            key, subkey = jr.split(key)
+            seq = self.alg.sample(self.state.params,
+                                  subkey,
+                                  self.num_samples_per_outer)
+            new_x0s = seq[-1]    # shape: (num_samples_per_outer, data_dim)
+            self.buffer.add(new_x0s)
+
+            # ─── Optionally compute logZ before inner updates ───────────────────
+            if self.if_logZ:
+                key, logz_key = jr.split(key)
+                logz = self.alg.estimate_logZ(
+                    self.state.params,
+                    logz_key,
+                    num_samples=self.num_samples_per_outer
+                )
+                self.logZ_means = self.logZ_means.at[outer].set(jnp.mean(logz))
+                self.logZ_vars  = self.logZ_vars.at[outer].set(jnp.var(logz))
+
+            # ─── Inner loop via jax.lax.scan over `self.inner_iters` ───────────
+            def inner_body(carry, _unused):
+                """
+                carry = (state, key)
+                each step: split key, do one train_step → (new_state, loss)
+                return new carry = (new_state, new_key), and emit `loss`
+                """
+                state, key = carry
+                key, subk = jr.split(key)
+                new_state, loss = self.train_step(
+                    state,
+                    subk,
+                    self.buffer,
+                    self.target_dist,
+                    self.score_fn,
+                    self.batch_size
+                )
+                return (new_state, key), loss
+
+            # initialize carry for inner scan
+            init_carry = (self.state, key)
+            (final_carry, losses_inner) = jax.lax.scan(
+                inner_body,
+                init_carry,
+                None,
+                length=self.inner_iters
+            )
+            # unpack final carry
+            self.state, key = final_carry
+
+            # collect losses from this outer iteration
+            all_losses.append(losses_inner)  # shape: (inner_iters,)
+
+            last_loss = losses_inner[-1]
+            jax.debug.print(
+                "[Outer {}/{}] last_inner_loss = {:.5f}",
+                outer+1, self.outer_iters, last_loss
             )
 
-            # Optionally estimate logZ every 10 steps
-            def compute_logz(key_inner):
-                key_inner, key2 = jr.split(key_inner)
-                logz = self.alg.estimate_logZ(state.params, key2, num_samples=1000)
-                idx = step // 10
-                new_means = logz_means.at[idx].set(jnp.mean(logz))
-                new_vars = logz_vars.at[idx].set(jnp.var(logz))
-                return key_inner, new_means, new_vars
+        # Concatenate all inner‐loop losses over all outer iterations
+        all_losses = jnp.concatenate(all_losses, axis=0)  # shape: (outer_iters * inner_iters,)
 
-            key, logz_means, logz_vars = jax.lax.cond(
-                self.if_logZ & (step % 10 == 9),
-                compute_logz,
-                lambda k: (k, logz_means, logz_vars),
-                operand=key
-            )
+        final_state = self.state
+        final_key = key
+        return final_state, final_key, all_losses, self.logZ_means, self.logZ_vars
 
-            # Every 100 steps, print progress
-            def do_print(_):
-                jax.debug.print("Step {}: loss = {}", step, loss)
-                return None
 
-            _ = jax.lax.cond((step % 100) == 0, do_print, lambda _: None, operand=None)
-
-            return (state, key, logz_means, logz_vars), loss
-
-        # Preallocate arrays for storing logZ statistics every 10 steps
-        num_logz_points = self.num_steps // 10 + 1
-        logz_means = jnp.zeros((num_logz_points,))
-        logz_vars = jnp.zeros((num_logz_points,))
-
-        init_carry = (self.state, rng_key, logz_means, logz_vars)
-        (final_state, final_key, final_means, final_vars), losses = jax.lax.scan(
-            scan_body,
-            init_carry,
-            jnp.arange(self.num_steps)
-        )
-
-        return final_state, final_key, losses, final_means, final_vars
