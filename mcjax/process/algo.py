@@ -277,7 +277,7 @@ class DDSAlgorithm(BaseAlgorithm):
             # Precompute sample KDEs for all frames
             kde_x = jnp.linspace(-7, 10, 500)
             frame_densities = []
-            for frame in range(self.K):
+            for frame in range(self.cfg.K):
                 current_samples = sample_seq[frame].flatten()
                 kde = gaussian_kde(current_samples)
                 frame_densities.append(kde(kde_x))
@@ -298,7 +298,7 @@ class DDSAlgorithm(BaseAlgorithm):
 
             def animate(frame):
                 line.set_data(kde_x, frame_densities[frame])
-                time_text.set_text(f'Step: {frame}/{self.K} (Time: {self.K-frame}/{self.K})')
+                time_text.set_text(f'Step: {frame}/{self.cfg.K} (Time: {self.cfg.K-frame}/{self.cfg.K})')
                 
                 return line, time_text
 
@@ -306,7 +306,7 @@ class DDSAlgorithm(BaseAlgorithm):
             ani = animation.FuncAnimation(
                 fig=fig,
                 func=animate,
-                frames=self.K,
+                frames=self.cfg.K,
                 interval=20,
                 blit=True
             )
@@ -346,14 +346,14 @@ class DDSAlgorithm(BaseAlgorithm):
                 # Update sample positions (convert JAX array to NumPy for matplotlib)
                 current_samples = jnp.array(sample_seq[frame])
                 scatter.set_offsets(current_samples)
-                time_text.set_text(f'Step: {frame}/{self.K} (Time: {self.K-frame}/{self.K})')
+                time_text.set_text(f'Step: {frame}/{self.cfg.K} (Time: {self.cfg.K-frame}/{self.cfg.K})')
                 return scatter, time_text
 
             # Create animation
             ani = animation.FuncAnimation(
                 fig=fig,
                 func=animate,
-                frames=self.K,
+                frames=self.cfg.K,
                 interval=20,
                 blit=True
             )
