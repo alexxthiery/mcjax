@@ -110,7 +110,7 @@ class IDEMTrainer:
     """
 
     def __init__(self,
-                 algorithm,
+                 buffer,
                  process,
                  init_dist,
                  target_dist,
@@ -122,7 +122,7 @@ class IDEMTrainer:
                  inner_iters: int,
                  num_samples_per_outer: int,
                  if_logZ: bool = False):
-        self.alg = algorithm
+        self.buffer = buffer
         self.process = process
         self.init_dist = init_dist
         self.target_dist = target_dist
@@ -143,7 +143,6 @@ class IDEMTrainer:
             self.logZ_means = None
             self.logZ_vars = None
 
-        self.buffer = algorithm.buffer
 
         # JIT‐compile (loss + grad) and train_step for one inner update
         self.loss_and_grad = jax.jit(
