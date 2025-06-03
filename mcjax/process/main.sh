@@ -46,7 +46,7 @@ python main.py \
     --model_path $model_path \
     --results_dir $results_dir \
     --buffer_size $buffer_size \
-    --inner_iters $inner_steps \
-    --outer_iters $outer_steps \
+    --inner_iters $inner_iters \
+    --outer_iters $outer_iters \
     --num_samples_per_outer $num_samples_per_outer
   
