@@ -63,16 +63,16 @@ class Trainer:
         """
         def scan_body(carry, step):
             state, key, logz_vals, logz_vars = carry
-            key, subkey = jr.split(key)
+            key, key_ = jr.split(key)
 
             state, loss = self.train_step(
-                state, subkey,
+                state, key_,
                 self.process, self.init_dist, self.target_dist,
                 self.score_fn, self.batch_size, self.loss_obj
             )
 
             # Optionally estimate logZ every 10 steps
-            def compute_logz(_):
+            def compute_logz(key):
                 key, key_ = jr.split(key)
                 logz = self.alg.estimate_logZ(state.params, key_, self.process,
                                             self.init_dist, self.target_dist,
@@ -86,7 +86,7 @@ class Trainer:
                 self.if_logZ & (step % 10 == 9),
                 compute_logz,
                 lambda _: (key, logz_vals, logz_vars),
-                operand=None
+                operand=key
             )
 
 
