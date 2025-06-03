@@ -1,0 +1,127 @@
+# main.py
+
+import argparse
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import pickle
+import matplotlib.pyplot as plt
+import numpy as np
+from functools import partial
+from scipy.stats import gaussian_kde
+from matplotlib.animation import FFMpegWriter
+import matplotlib.animation as animation
+
+from algo import DDSAlgorithm
+from metrics import MMD_squared
+
+
+def parse_args():
+    def str2bool(v):
+        return v.lower() in ('true', '1', 'yes')
+    parser = argparse.ArgumentParser(description="Neural Sampler Experiments")
+    parser.add_argument("--algo",       type=str, default="dds",
+                        choices=["dds", "pis", "idem", "mcd", "cmcd"])
+    parser.add_argument("--target_dist",     type=str, default="gmm40")
+    parser.add_argument("--network_name", type=str, default="mlp",
+                        choices=["mlp", "resblock"])
+    parser.add_argument("--condition_term", type=str, default="grad_score",
+                        choices=["none", "score", "grad_score"])
+    parser.add_argument('--add_score', type=str2bool, default=False) 
+    parser.add_argument('--variable_ts', type=str2bool, default=False)  
+    parser.add_argument("--K",          type=int, default=2000)
+    parser.add_argument("--sigma",      type=float, default=1.0)
+    parser.add_argument("--lr",         type=float, default=1e-4)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--num_steps",  type=int, default=1000)
+    parser.add_argument("--if_logZ",    type=str2bool, default=False)
+    parser.add_argument("--seed",       type=int, default=0)
+    parser.add_argument("--if_train",   type=str2bool, default=False)
+    parser.add_argument("--if_animation", type=str2bool, default=True)
+    parser.add_argument("--model_path", type=str, default="model_params.pkl")
+    parser.add_argument("--result_dir", type=str, default="results")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # 1) Choose algorithm class
+    if args.algo == "dds":
+        AlgoClass = DDSAlgorithm
+    # elif args.algo == "pis":
+    #     AlgoClass = PISAlgorithm
+    else:
+        raise NotImplementedError(f"Algorithm {args.algo} not supported yet.")
+
+    # 2) Instantiate
+    alg = AlgoClass(config=args)
+
+    # 3) Training or Load
+    key = jr.PRNGKey(args.seed)
+    if args.if_train:
+        key, sub = jr.split(key)
+        final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
+        # Save parameters
+        with open(args.model_path, "wb") as f:
+            pickle.dump(final_state.params, f)
+
+        # Plot loss curve
+        plt.figure()
+        plt.plot(losses, label="train loss")
+        plt.xlabel("step")
+        plt.ylabel("loss")
+        plt.legend()
+        plt.title(f"{args.algo} training loss")
+        plt.savefig(f"{args.result_dir}/{args.algo}_loss.png")
+        plt.close()
+
+        # Plot logZ (if computed)
+        if args.if_logZ:
+            fig, ax1 = plt.subplots()
+            x = 10 + jax.numpy.arange(args.num_steps // 10)*10
+            ax1.plot(x, logz_vars[:len(x)], color='C0', label="logZ var")
+            ax1.set_xlabel("step")
+            ax1.set_ylabel("var(logZ)", color='C0')
+            ax1.tick_params(axis='y', labelcolor='C0')
+
+            ax2 = ax1.twinx()
+            ax2.plot(x, logz_vals[:len(x)], color='C1', label="logZ mean")
+            ax2.set_ylabel("mean(logZ)", color='C1')
+            ax2.tick_params(axis='y', labelcolor='C1')
+
+            lines, labels = ax1.get_legend_handles_labels()
+            l2, lbl2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines + l2, labels + lbl2, loc='upper left')
+            plt.title(f"{args.algo} logZ statistics")
+            plt.savefig(f"{args.result_dir}/{args.algo}_logZ.png")
+            plt.close()
+
+    else:
+        # Load saved params and wrap into a dummy TrainState
+        with open(args.model_path, "rb") as f:
+            saved_params = pickle.load(f)
+        alg.state = alg.state.replace(params=saved_params)
+
+    # 4) Sampling
+    key, sub = jr.split(key)
+    samples_seq = alg.sample(alg.state.params, sub, num_samples=10000)
+    samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
+
+    # 5) Metrics
+    # e.g. animate the evolution, or just compute MMD to target at final time
+    final_samples = samples_seq[-1]
+    # Compute MMD between final_samples and target samples
+    tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), 10000)
+    mmd_val = MMD_squared(np.array(final_samples), np.array(tgt_samps), sigma=1.0)
+    print(f"Final MMD to target: {mmd_val:.4e}")
+
+    # Visualization 
+    alg.visualize_samples(samples_seq)
+
+
+
+
+
+if __name__ == "__main__":
+    main()
