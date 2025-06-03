@@ -72,14 +72,23 @@ class Trainer:
             )
 
             # Optionally estimate logZ every 10 steps
-            if self.if_logZ and (step % 10 == 9):
-                key, sub2 = jr.split(key)
-                logz = self.alg.estimate_logZ(state.params, sub2, self.process,
-                                              self.init_dist, self.target_dist,
-                                              self.score_fn, batch_size=1000)
+            def compute_logz(_):
+                key, key_ = jr.split(key)
+                logz = self.alg.estimate_logZ(state.params, key_, self.process,
+                                            self.init_dist, self.target_dist,
+                                            self.score_fn, batch_size=1000)
                 idx = step // 10
-                logz_vals = logz_vals.at[idx].set(jnp.mean(logz))
-                logz_vars = logz_vars.at[idx].set(jnp.var(logz))
+                new_vals = logz_vals.at[idx].set(jnp.mean(logz))
+                new_vars = logz_vars.at[idx].set(jnp.var(logz))
+                return key, new_vals, new_vars
+        
+            key, logz_vals, logz_vars = jax.lax.cond(
+                self.if_logZ & (step % 10 == 9),
+                compute_logz,
+                lambda _: (key, logz_vals, logz_vars),
+                operand=None
+            )
+
 
             return (state, key, logz_vals, logz_vars), loss
 
