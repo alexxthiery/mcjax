@@ -511,7 +511,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         # ----------------------------------------------------------------------
         # 12) Build the iDEM loss object
         # ----------------------------------------------------------------------
-        self.loss_obj = IDEMLoss(K=config.mc_K, sigma_fn=self.sigma_fn)
+        self.loss_obj = IDEMLoss(K=1000, sigma_fn=self.sigma_fn)
 
 
     def make_score_fn(self):
