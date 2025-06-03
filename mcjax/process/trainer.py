@@ -86,7 +86,13 @@ class Trainer:
                 lambda _: (key, logz_vals, logz_vars),
                 operand=key
             )
+            # every 100 steps, print step and current loss
+            def do_print(_):
+                jax.debug.print("At step {}, loss = {}", step, loss)
+                return None
 
+            # branch on (step % 100 == 0)
+            _ = jax.lax.cond((step % 100) == 0, do_print, lambda _: None, operand=None)
 
             return (state, key, logz_vals, logz_vars), loss
 
