@@ -2,6 +2,7 @@ import jax.numpy as jnp
 from scipy.stats import wasserstein_distance
 from sklearn.metrics import pairwise_distances
 import numpy as np
+from scipy.special import logsumexp 
 
 def MMD_squared(x_samples: np.ndarray, y_samples: np.ndarray, kernel='rbf', sigma=1.0):
     """
@@ -34,10 +35,20 @@ def two_wasserstein(x_samples: np.ndarray, y_samples: np.ndarray):
     else:
         raise NotImplementedError("Multidimensional Wasserstein not implemented")
 
-def ESS(weights: np.ndarray):
+def ELBO(logweights: np.ndarray, logZ: float = 0.0):
+    """
+    Evidence Lower Bound (ELBO) computed from log-weights.
+    logweights: shape (N,) - log of normalized weights
+    logZ: optional log normalization constant
+    """
+    # use logsumexp to compute log of sum of exponentials
+    return logsumexp(logweights) - np.log(len(logweights)) + logZ
+
+def ESS(logweights: np.ndarray):
     """
     Effective sample size: 1 / sum(w_i^2), where weights normalized to sum=1.
     weights: shape (N,)
     """
-    w = weights / np.sum(weights)
-    return 1.0 / np.sum(w*w)
+    # use logsumexp to compute log of sum of exponentials
+    return 1.0 / np.exp(logsumexp(2 * logweights)) 
+

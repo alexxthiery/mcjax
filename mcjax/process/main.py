@@ -10,8 +10,9 @@ import numpy as np
 import os
 import sys
 sys.path.append('../../')
+import time
 
-from algo import DDSAlgorithm
+from algo import DDSAlgorithm,IDEMAlgorithm
 from metrics import MMD_squared
 
 
@@ -51,8 +52,8 @@ def main():
     # Choose algorithm class
     if args.algo == "dds":
         AlgoClass = DDSAlgorithm
-    # elif args.algo == "pis":
-    #     AlgoClass = PISAlgorithm
+    elif args.algo == "idem":
+        AlgoClass = IDEMAlgorithm
     else:
         raise NotImplementedError(f"Algorithm {args.algo} not supported yet.")
 
@@ -62,7 +63,10 @@ def main():
     key = jr.PRNGKey(args.seed)
     if args.if_train:
         key, sub = jr.split(key)
+        t1 = time.time()
         final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
+        t2 = time.time()
+        print(f"Training finished in {t2 - t1:.2f} seconds.")
         # Save parameters
         with open(args.model_path, "wb") as f:
             pickle.dump(final_state.params, f)

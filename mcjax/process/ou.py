@@ -58,7 +58,7 @@ class OU:
 
     @partial(jax.jit, static_argnums=(0,4))
     def reverse_step(self, key, y_next, k, score_fn, params):
-        # now y_next is the actual next state from the reverse chain
+        # y_next is the actual next state from the reverse chain
         key, key_ = jr.split(key)
         eps = jr.normal(key_, shape=y_next.shape)
         drift = 2 * self.sigma**2 * (1 - self.sqrt_1m_alpha[self.K - k - 1]) *\
@@ -67,3 +67,19 @@ class OU:
               + drift
               + self.sigma * self.sqrt_alpha[self.K - k - 1] * eps)
         return key, y_k
+
+    @partial(jax.jit, static_argnums=(0, 3))
+    def integrate_reverse(self, key: jr.PRNGKey, x1: jnp.ndarray,
+                          score_fn, params) -> jnp.ndarray:
+        """
+        Starting from x1 (the prior sample at t=1), run the reverse SDE for K steps
+        to obtain x0.  Returns a tensor of shape (N, D, …).
+        """
+        def body(i, carry):
+            y, key = carry
+            key, y = self.reverse_step(key, y, i, score_fn, params)
+            return y, key
+
+        # Initialize carry with (y_K = x1, PRNG key)
+        (y0, _key) = jax.lax.fori_loop(0, self.K, body, (x1, key))
+        return y0

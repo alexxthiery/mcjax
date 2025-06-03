@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 import jax
 import jax.random as jr
 import jax.numpy as jnp
+from functools import partial
+from scipy.special import logsumexp
 
 class BaseLoss(ABC):
     """Abstract interface for any training loss."""
@@ -78,8 +80,93 @@ class DDSLoss(BaseLoss):
         loss = jnp.mean(rK + log_ref - log_targ)
         return loss
 
-# You could similarly create classes for other path‐measure losses:
-# class RKLoss(BaseLoss): ...
-# class LogVarianceLoss(BaseLoss): ...
-# class TrajectoryBalanceLoss(BaseLoss): ...
-# class DetailedBalanceLoss(BaseLoss): ...
+class IDEMLoss(BaseLoss):
+    """
+    Implements the Iterated Denoising Energy Matching (iDEM) inner-loop loss:
+      L_DEM(x_t, t) = || S_K(x_t, t) - s_theta(x_t, t) ||^2,
+    """
+    def __init__(self, K: int, sigma_fn: callable):
+        """
+        Args:
+          K: number of Monte Carlo samples used in estimating the score S_K.
+        """
+        self.K = K
+        self.sigma_fn = sigma_fn  # (geometric) noise schedule
+
+    @partial(jax.jit, static_argnums=(0,))
+    def __call__(self,
+                params,
+                key: jr.PRNGKey,
+                buffer,          
+                target_dist,     
+                score_fn,        # sθ(params, t, x_t) → R^d
+                batch_size: int):
+        """
+        Returns:
+        loss: scalar, the average MSE between S_K(x_t, t) and s_theta(x_t, t).
+        """
+        # Draw a batch of x0 ∼ buffer
+        key, sub = jr.split(key)
+        x0 = buffer.sample(sub, batch_size)    # shape: (B, d, ...)
+
+        # Sample t ∼ Uniform(0,1) for each x0 in the batch
+        key, sub = jr.split(key)
+        t = jr.uniform(sub, shape=(batch_size,), minval=0.0, maxval=1.0)  # → (B,)
+
+        # Form x_t = x0 + sigma_t * eps, where σ_t = sigma_fn(t)
+        sigma_t = self.sigma_fn(t)  # → (B,)
+        # reshape so that σ_t can broadcast over (d, …) dimensions of x0
+        sigma_t = sigma_t.reshape((batch_size,) + (1,) * (x0.ndim - 1))
+        key, sub = jr.split(key)
+        eps = jr.normal(sub, shape=x0.shape)
+        x_t = x0 + sigma_t * eps    # → (B, d, …)
+
+        # Define a function that, for one (x_t_single, t_single),
+        #    draws K samples x0_i ∼ N(x_t_single, σ_t^2), computes log p and ∇ log p,
+        #    and returns the weighted average of gradients via log‐sum‐exp.
+        def mc_estimate_single(x_t_single, t_single, key_single):
+            sigma = self.sigma_fn(t_single)    # scalar
+
+            # draw K independent x0_i ∼ N(x_t_single, σ² I)
+            keys_MC = jr.split(key_single, self.K)
+            x0_MC = jnp.stack([
+                x_t_single + sigma * jr.normal(k, shape=x_t_single.shape)
+                for k in keys_MC
+            ], axis=0)  # → (K, d, …)
+
+            # evaluate log-density and score at each of the K samples:
+            #    logp_MC[i] = log p_target(x0_MC[i])
+            #    grad_logp_MC[i] = ∇_x log p_target(x0_MC[i])
+            logp_MC = target_dist.batch(x0_MC)      # → (K,)
+            grad_logp_MC = target_dist.grad(x0_MC)   # → (K, d, …)
+
+            # d) form a numerically‐stable softmax over {logp_MC}:
+            #    w_norm[i] = exp(logp_MC[i] - logsumexp(logp_MC))
+            lse = logsumexp(logp_MC)                # scalar
+            w_norm = jnp.exp(logp_MC - lse)         # → (K,)
+
+            # e) compute weighted average of gradient vectors:
+            #    S_K = Σ_i [ w_norm[i] * grad_logp_MC[i] ]
+            expand_dims = (1,) * (grad_logp_MC.ndim - 1)
+            w_shaped = w_norm.reshape((self.K,) + expand_dims)  # → (K, 1, 1, …)
+            numerator = jnp.sum(w_shaped * grad_logp_MC, axis=0)  # → (d, …)
+
+            return numerator
+
+        keys_batch = jr.split(key, batch_size)  # → (B,) of PRNGKey
+
+        # Vectorize mc_estimate_single over the batch dimension
+        S_K_batch = jax.vmap(mc_estimate_single)(
+            x_t,       # shape: (B, d, …)
+            t,         # shape: (B,)
+            keys_batch # shape: (B,)
+        )  # → (B, d, …)
+
+        s_pred = score_fn(params, t, x_t)  # → (B, d, …)
+
+        # Compute per-example squared ‖S_K - s_pred‖² and average:
+        sq_err = jnp.sum((S_K_batch - s_pred) ** 2,
+                        axis=tuple(range(1, S_K_batch.ndim)))  # → (B,)
+        loss = jnp.mean(sq_err)  # scalar
+
+        return loss
