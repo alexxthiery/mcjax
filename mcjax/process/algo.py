@@ -490,8 +490,8 @@ class IDEMAlgorithm(BaseAlgorithm):
         # 10) Define geometric σ(t) inside this class:
         #     σ(t) = σ_min * (σ_max/σ_min)^t      for t ∈ [0,1]
         # ----------------------------------------------------------------------
-        sigma_min = float(config.sigma_min)
-        sigma_max = float(config.sigma_max)
+        sigma_min = 0.1
+        sigma_max = 5.0
 
         def sigma_fn(t):
             # t can be a scalar or an array in [0,1]
