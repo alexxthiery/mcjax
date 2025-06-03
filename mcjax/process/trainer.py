@@ -43,7 +43,7 @@ class Trainer:
 
         self.train_step = jax.jit(
             self._train_step,
-            static_argnums=(2,3,4,5,6,7,8) 
+            static_argnums=(3,4,5,6,7,8,9) 
         )
 
     def _loss_wrapper(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
