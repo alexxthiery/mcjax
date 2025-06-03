@@ -11,6 +11,8 @@ from functools import partial
 from scipy.stats import gaussian_kde
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
+import sys
+sys.path.append('../../')
 
 from algo import DDSAlgorithm
 from metrics import MMD_squared
