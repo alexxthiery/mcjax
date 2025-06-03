@@ -82,10 +82,10 @@ class DDSAlgorithm(BaseAlgorithm):
         self.cfg = config
 
         # 1) build the target distribution
-        if config.target_name == 'gmm40':
+        if config.target_dist == 'gmm40':
             self.target_dist = GMM40()
             self.data_dim = 2
-        elif config.target_name == '1d':
+        elif config.target_dist == '1d':
             mu = jnp.array([[-2.],[0.],[2.]])
             dist_sigma = jnp.array([0.3, 0.3, 0.3])
             log_var = jnp.log(dist_sigma**2)
@@ -265,7 +265,7 @@ class DDSAlgorithm(BaseAlgorithm):
             # Save animation
             writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
             ani_name = 'density_evolution.mp4' 
-            ani.save(self.cfg.result_dir+'/'+ani_name, writer=writer)
+            ani.save(self.cfg.results_dir+'/'+ani_name, writer=writer)
 
             plt.close()
         elif self.data_dim == 2:
@@ -312,6 +312,6 @@ class DDSAlgorithm(BaseAlgorithm):
             # Save animation
             writer = FFMpegWriter(fps=30, metadata=dict(artist='Me'), bitrate=1800)
             ani_name = 'sample_movement_2d.mp4'
-            ani.save(self.cfg.result_dir+'/'+ani_name, writer=writer)
+            ani.save(self.cfg.results_dir+'/'+ani_name, writer=writer)
 
             plt.close()
