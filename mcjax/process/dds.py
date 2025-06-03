@@ -20,66 +20,11 @@ sys.path.append('../../')
 from mcjax.proba.density import LogDensity
 from mcjax.process.ou import OU
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
+from mcjax.process.models import MLPModel, ResBlockModel
 
 print(f"Available devices: {jax.devices()}")
 jax.config.update("jax_platform_name", "gpu")
 
-class MLPModel(nn.Module):
-    """
-    The loss is computed by u(t,x) = NN1(t,x) + NN2(t) * nabla log(mu(x))
-    Thus the output of both networks are given.
-    """
-    dim: int   
-    T: int      # total number of diffusion steps
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray, t: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        # Shared time embedding components
-        half_dim = 32
-        emb_scale = jnp.log(10000.0) / (half_dim - 1)
-        freqs = jnp.exp(jnp.arange(half_dim) * -emb_scale)
-        
-        # ========== NN1 Branch (x + time) ==========
-        # Time embedding
-        t_proj = t[:, None] * freqs[None, :]
-        t_emb = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)
-        
-        t_embed = nn.Sequential([
-            nn.Dense(64), nn.relu,
-            nn.Dense(256), nn.relu
-        ])(t_emb)
-        
-        # Combine with x
-        h = jnp.concatenate([x, t_embed], axis=-1)
-        h = nn.Dense(128)(h)
-        h = nn.LayerNorm()(h)
-        h = nn.relu(h)
-        
-        # Residual blocks
-        for _ in range(2):
-            h0 = h
-            h = nn.Dense(128)(h)
-            h = nn.LayerNorm()(h)
-            h = nn.relu(h)
-            h = nn.Dense(128)(h)
-            h = h + h0
-            h = nn.LayerNorm()(h)
-            h = nn.relu(h)
-            
-        nn1_out = nn.Dense(self.dim)(h)
-
-        # ========== NN2 Branch (time only) ==========
-        # Time embedding
-        t_proj_nn2 = t[:, None] * freqs[None, :]
-        t_emb_nn2 = jnp.concatenate([jnp.sin(t_proj_nn2), jnp.cos(t_proj_nn2)], axis=-1)
-        
-        nn2_out = nn.Sequential([
-            nn.Dense(64), nn.relu,
-            nn.Dense(self.dim)
-        ])(t_emb_nn2)
-
-        return nn1_out, nn2_out
-    
 
 def dds_loss(params, key, ou: OU, init_dist: LogDensity,
              target_dist: LogDensity, score_fn, batch_size: int, add_score: bool):
@@ -230,8 +175,8 @@ if __name__ == "__main__":
         return v.lower() in ('true', '1', 'yes')
     parser = argparse.ArgumentParser()
     parser.add_argument('--if_train', type=str2bool, default=False)
-    parser.add_argument('--model_path', type=str, default='model_params.pkl')
-    parser.add_argument('--condition_term', type=str, default='grad') # 'grad_score', 'score' or 'none'
+    parser.add_argument('--network_name', type=str, default='resblock') # True if training the model, False if loading the model and generating samples
+    parser.add_argument('--condition_term', type=str, default='none') # 'grad_score', 'score' or 'none'
     parser.add_argument('--target_dist', type=str, default='gmm40') # 'gmm40' or '1d'
     parser.add_argument('--if_animation', type=str2bool, default=False)
     parser.add_argument('--add_score', type=str2bool, default=False) # True if adding the score term(with zero mean) in loss function
@@ -242,12 +187,14 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=128) # batch size
     parser.add_argument('--num_steps', type=int, default=4000) # number of training steps
     parser.add_argument('--if_logZ', type=str2bool, default=False) # whether to estimate logZ during training
+    parser.add_argument('--model_path', type=str, default='model_params.pkl')
 
 
     args = parser.parse_args()
     
     # Unpack arguments
     if_train = args.if_train
+    network_name = args.network_name
     model_path = args.model_path
     condition_term = args.condition_term
     target = args.target_dist
@@ -291,7 +238,12 @@ if __name__ == "__main__":
     # Define the dynamic of the process
     ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
     # Define the network
-    model = MLPModel(dim=data_dim, T=K)
+    if network_name == 'mlp':
+        model = MLPModel(dim=data_dim, T=K)
+    elif network_name == 'resblock':
+        model = ResBlockModel(dim=data_dim, T=K)
+    else:
+        raise ValueError(f"Unknown network name: {network_name}")
 
     # network initialization
     key = jr.PRNGKey(0)
@@ -304,7 +256,7 @@ if __name__ == "__main__":
     # optimizer initialization  
     optimizer = optax.adam(learning_rate)
     state = train_state.TrainState.create(
-        apply_fn=model.apply,
+        apply_fn=model.apply_fn,
         params=params,
         tx=optimizer
     )
@@ -312,8 +264,7 @@ if __name__ == "__main__":
     # Define score function 
     def score_fn(params, k, y):
         batch_t = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-        nn1, nn2 = model.apply(params, y, batch_t)
-        # nn1 = model.apply(params, y, batch_t)
+        nn1, nn2 = model.apply_fn(params, y, batch_t)
         log_mu = target_dist.batch(y)
         grad_log_mu = target_dist.grad_batch(y)  
         if condition_term == 'grad_score':
