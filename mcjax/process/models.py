@@ -104,7 +104,7 @@ class MLPModel(nn.Module, BaseModel):
 
 class ResBlockModel(nn.Module, BaseModel):
     """
-    Example ResBlock‐only model (if you want a purely residual architecture).
+    ResBlock model 
     """
     dim: int
     T:   int

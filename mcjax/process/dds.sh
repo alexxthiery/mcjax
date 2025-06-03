@@ -5,7 +5,7 @@
 
 # ----------- Network parameters -----------
 if_train=true
-model_path='model_params.pkl'
+network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
 condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term; 
 
 # ---------- Target distribution parameters -----------
@@ -26,11 +26,13 @@ lr=0.0001 # Learning rate
 batch_size=128 # Batch size
 num_steps=1000 # Number of steps for training
 if_logZ=false # calculate logZ during training
+model_path='model_params.pkl'
 
 
 
 python dds.py \
   --if_train $if_train \
+  --network_name $network_name \
   --model_path $model_path \
   --condition_term $condition_term \
   --target_dist $target_dist \
