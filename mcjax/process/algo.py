@@ -214,7 +214,7 @@ class DDSAlgorithm(BaseAlgorithm):
             return seq  # shape (K, num_samples, dim)
         return generate(params, rng_key)
     
-    @partial(jax.jit, static_num_args=(0,3))
+    @partial(jax.jit, static_argnums=(0,3))
     def estimate_logZ(self, params, key, num_samples: int):
         """
         Runs one Monte Carlo estimate of log Z per sample.
