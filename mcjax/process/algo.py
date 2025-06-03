@@ -112,12 +112,12 @@ class DDSAlgorithm(BaseAlgorithm):
 
         # 5) build the network(s)
         #    choose MLP or ResBlock based on config.model_type
-        if config.model_type == 'mlp':
+        if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=K)
-        elif config.model_type == 'resblock':
+        elif config.network_name == 'resblock':
             self.model = ResBlockModel(dim=self.data_dim, T=K)
         else:
-            raise ValueError(f"Unknown model_type: {config.model_type}")
+            raise ValueError(f"Unknown model_type: {config.network_name}")
 
         # 6) initialize network params
         key = jr.PRNGKey(config.seed)
