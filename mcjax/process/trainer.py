@@ -121,7 +121,7 @@ class IDEMTrainer:
       - state:       a Flax TrainState containing .params and .opt_state
       - batch_size:  mini‐batch size for inner loop
       - outer_iters: number of outer sampling loops
-      - inner_steps: number of gradient steps per outer iteration
+      - inner_iters: number of gradient steps per outer iteration
       - num_samples_per_outer: how many new x₀’s to generate each outer iteration
       - if_logZ:     whether to compute logZ estimates (Boolean)
     """
@@ -136,7 +136,7 @@ class IDEMTrainer:
                  state: train_state.TrainState,
                  batch_size: int,
                  outer_iters: int,
-                 inner_steps: int,
+                 inner_iters: int,
                  num_samples_per_outer: int,
                  if_logZ: bool = False):
         self.buffer = buffer
@@ -149,7 +149,7 @@ class IDEMTrainer:
         self.batch_size = batch_size
 
         self.outer_iters = outer_iters
-        self.inner_steps = inner_steps
+        self.inner_iters = inner_iters
         self.num_samples_per_outer = num_samples_per_outer
 
         self.if_logZ = if_logZ
