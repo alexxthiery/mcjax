@@ -123,6 +123,11 @@ class ResBlockModel(nn.Module, BaseModel):
 
         # combine with x
         h = jnp.concatenate([x, t_embed], axis=-1)
+
+        h = nn.Dense(256)(h)         # (batch, 256)
+        h = nn.LayerNorm()(h)        
+        h = nn.relu(h)
+
         for _ in range(4):
             h0 = h
             h = nn.Dense(256)(h);  h = nn.LayerNorm()(h);  h = nn.relu(h)
