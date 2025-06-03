@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument("--if_train",   type=str2bool, default=False)
     parser.add_argument("--if_animation", type=str2bool, default=True)
     parser.add_argument("--model_path", type=str, default="model_params.pkl")
-    parser.add_argument("--result_dir", type=str, default="results")
+    parser.add_argument("--results_dir", type=str, default="results")
     return parser.parse_args()
 
 
@@ -75,7 +75,7 @@ def main():
         plt.ylabel("loss")
         plt.legend()
         plt.title(f"{args.algo} training loss")
-        plt.savefig(f"{args.result_dir}/{args.algo}_loss.png")
+        plt.savefig(f"{args.results_dir}/{args.algo}_loss.png")
         plt.close()
 
         # Plot logZ (if computed)
@@ -96,7 +96,7 @@ def main():
             l2, lbl2 = ax2.get_legend_handles_labels()
             ax1.legend(lines + l2, labels + lbl2, loc='upper left')
             plt.title(f"{args.algo} logZ statistics")
-            plt.savefig(f"{args.result_dir}/{args.algo}_logZ.png")
+            plt.savefig(f"{args.results_dir}/{args.algo}_logZ.png")
             plt.close()
 
     else:
