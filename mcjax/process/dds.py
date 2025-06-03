@@ -175,7 +175,7 @@ if __name__ == "__main__":
         return v.lower() in ('true', '1', 'yes')
     parser = argparse.ArgumentParser()
     parser.add_argument('--if_train', type=str2bool, default=False)
-    parser.add_argument('--network_name', type=str2bool, default='resblock') # True if training the model, False if loading the model and generating samples
+    parser.add_argument('--network_name', type=str, default='resblock') # True if training the model, False if loading the model and generating samples
     parser.add_argument('--condition_term', type=str, default='none') # 'grad_score', 'score' or 'none'
     parser.add_argument('--target_dist', type=str, default='gmm40') # 'gmm40' or '1d'
     parser.add_argument('--if_animation', type=str2bool, default=False)
