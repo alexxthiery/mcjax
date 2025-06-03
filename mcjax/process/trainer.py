@@ -103,3 +103,70 @@ class Trainer:
             jnp.arange(self.num_steps)
         )
         return final_state, final_key, losses, logz_vals, logz_vars
+
+class InnerTrainer:
+    """
+    Runs a fixed number of gradient‐descent steps on IDEMLoss, given:
+      - loss_obj:   an IDEMLoss instance
+      - state:      a Flax TrainState (holds .params and optimizer state)
+      - batch_size: minibatch size for each gradient step
+      - inner_iters: how many gradient steps to perform
+    """
+
+    def __init__(self, loss_obj, state: train_state.TrainState, batch_size: int, inner_iters: int):
+        self.loss_obj = loss_obj
+        self.state = state
+        self.batch_size = batch_size
+        self.inner_iters = inner_iters
+
+        # JIT‐compile a loss‐and‐grad function that calls IDEMLoss:
+        self.loss_and_grad = jax.jit(
+            jax.value_and_grad(self._loss_fn, argnums=0),
+            static_argnums=(2,3) 
+        )
+        # JIT‐compile one train_step (computes loss+grad, applies optimizer)
+        self.train_step = jax.jit(self._train_step, static_argnums=(2,3))
+
+    def _loss_fn(self, params, key, batch_size,loss_obj):
+        """
+        Wrap IDEMLoss.  We draw a minibatch from buffer inside IDEMLoss itself.
+        """
+        return loss_obj(
+            params=params,
+            key=key,
+            batch_size=batch_size
+        )
+
+    def _train_step(self, state, key, batch_size,loss_obj):
+        """
+        One gradient step on IDEMLoss.  Returns (new_state, loss_scalar).
+        """
+        params = state.params
+        (loss, grads) = self.loss_and_grad(params, key, batch_size,loss_obj)
+        new_state = state.apply_gradients(grads=grads)
+        return new_state, loss
+
+    def run(self, rng_key):
+        """
+        Runs exactly `inner_iters` gradient steps, all inside a single lax.scan.
+        Returns (final_state, final_key, losses_array), where
+          - final_state: updated TrainState
+          - final_key: final PRNGKey after splitting
+          - losses_array: jnp array of shape (inner_iters,) with each step’s loss
+        """
+        def inner_body(carry, _unused):
+            # jax.debug.print("Inner step")
+            state, key = carry
+            key, sub = jr.split(key)
+            new_state, loss = self.train_step(state, sub, self.batch_size,self.loss_obj)
+            return (new_state, key), loss
+
+        init_carry = (self.state, rng_key)
+        (final_state, final_key), losses = jax.lax.scan(
+            inner_body,
+            init_carry,
+            None,
+            length=self.inner_iters
+        )
+        return final_state, final_key, losses
+
