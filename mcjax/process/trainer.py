@@ -43,13 +43,13 @@ class Trainer:
 
         self.train_step = jax.jit(
             self._train_step,
-            static_argnums=(3,4,5,6,7,8,9) 
+            static_argnums=(2,3,4,5,6,7) 
         )
 
     def _loss_wrapper(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
         return self.loss_obj(params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs)
 
-    def _train_step(self, state, key, process, init_dist, target_dist, score_fn, batch_size, loss_obj, if_logZ):
+    def _train_step(self, state, key, process, init_dist, target_dist, score_fn, batch_size, loss_obj):
         loss, grads = self.loss_and_grad(
             state.params, key, process, init_dist, target_dist, score_fn, batch_size, add_score=loss_obj.add_score
         )
@@ -68,7 +68,7 @@ class Trainer:
             state, loss = self.train_step(
                 state, subkey,
                 self.process, self.init_dist, self.target_dist,
-                self.score_fn, self.batch_size, self.loss_obj, self.if_logZ
+                self.score_fn, self.batch_size, self.loss_obj
             )
 
             # Optionally estimate logZ every 10 steps
