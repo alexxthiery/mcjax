@@ -74,9 +74,7 @@ class Trainer:
             # Optionally estimate logZ every 10 steps
             def compute_logz(key):
                 key, key_ = jr.split(key)
-                logz = self.alg.estimate_logZ(state.params, key_, self.process,
-                                            self.init_dist, self.target_dist,
-                                            self.score_fn, batch_size=1000)
+                logz = self.alg.estimate_logZ(state.params, key_, num_samples=1000)
                 idx = step // 10
                 new_vals = logz_vals.at[idx].set(jnp.mean(logz))
                 new_vars = logz_vars.at[idx].set(jnp.var(logz))

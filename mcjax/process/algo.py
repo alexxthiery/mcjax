@@ -5,6 +5,7 @@ import jax.random as jr
 from flax.training import train_state
 import optax
 import matplotlib.pyplot as plt
+from functools import partial
 from scipy.stats import gaussian_kde
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
@@ -213,6 +214,54 @@ class DDSAlgorithm(BaseAlgorithm):
             return seq  # shape (K, num_samples, dim)
         return generate(params, rng_key)
     
+    def estimate_logZ(self, params, key, num_samples: int):
+        """
+        Runs one Monte Carlo estimate of log Z per sample.
+        
+        Returns:
+        logZ: [num_samples] array of log-estimates of Z.
+        """
+        key, key_ = jr.split(key)
+        y_0 = self.init_dist.sample(key_, num_samples)
+
+        # Reverse chain + accumulate r_k
+        def scan_step(carry, k):
+            y_k, r_k, key = carry
+            key, key_ = jr.split(key)
+            eps = jr.normal(key_, y_k.shape)
+
+            alpha_Kmk = self.ou.alpha[self.ou.K - 1 - k]
+            sqrt1m    = self.ou.sqrt_1m_alpha[self.ou.K - 1 - k]
+            lambda_Kmk = 1.0 - sqrt1m
+
+            # score network
+            s = self.score_fn(params, self.ou.K - 1 - k, y_k)         
+
+            # reverse OU step
+            y_next = sqrt1m * y_k \
+                + 2.0 * (self.ou.sigma**2) * lambda_Kmk * s \
+                + self.ou.sigma * jnp.sqrt(alpha_Kmk) * eps
+
+            # accumulate the quadratic term
+            r_next = r_k + (2.0 * self.ou.sigma**2) * (lambda_Kmk**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
+
+            return (y_next, r_next, key), None
+
+        # initialize r_0 = 0
+        init_carry = (y_0, jnp.zeros(num_samples), key)
+        (y_K, r_K, _), _ = jax.lax.scan(
+            scan_step,
+            init_carry,
+            jnp.arange(self.ou.K)
+        )
+
+        # compute log Z estimates
+        log_ref  = self.init_dist.batch(y_K)
+        log_targ = self.target_dist.batch(y_K)
+        logZ     = r_K + log_ref - log_targ
+
+        return logZ
+
     def visualization(self, sample_seq):
         """
         Generate samples and visualize the results.
