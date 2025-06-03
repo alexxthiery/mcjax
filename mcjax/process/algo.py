@@ -262,7 +262,7 @@ class DDSAlgorithm(BaseAlgorithm):
 
         return logZ
 
-    def visualization(self, sample_seq):
+    def visualize_samples(self, sample_seq):
         """
         Generate samples and visualize the results.
         """
