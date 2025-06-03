@@ -7,10 +7,7 @@ import jax.random as jr
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
-from functools import partial
-from scipy.stats import gaussian_kde
-from matplotlib.animation import FFMpegWriter
-import matplotlib.animation as animation
+import os
 import sys
 sys.path.append('../../')
 
@@ -47,8 +44,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+    # create results_dir if not exist
+    if not os.path.exists(args.results_dir):
+        os.makedirs(args.results_dir)
 
-    # 1) Choose algorithm class
+    # Choose algorithm class
     if args.algo == "dds":
         AlgoClass = DDSAlgorithm
     # elif args.algo == "pis":
@@ -56,10 +56,9 @@ def main():
     else:
         raise NotImplementedError(f"Algorithm {args.algo} not supported yet.")
 
-    # 2) Instantiate
     alg = AlgoClass(config=args)
 
-    # 3) Training or Load
+    # Training or Load
     key = jr.PRNGKey(args.seed)
     if args.if_train:
         key, sub = jr.split(key)
@@ -105,13 +104,12 @@ def main():
             saved_params = pickle.load(f)
         alg.state = alg.state.replace(params=saved_params)
 
-    # 4) Sampling
+    # Sampling
     key, sub = jr.split(key)
     samples_seq = alg.sample(alg.state.params, sub, num_samples=10000)
     samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
 
-    # 5) Metrics
-    # e.g. animate the evolution, or just compute MMD to target at final time
+    # Metrics
     final_samples = samples_seq[-1]
     # Compute MMD between final_samples and target samples
     tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), 10000)

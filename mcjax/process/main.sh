@@ -3,7 +3,7 @@
 # ----------- Parameter settings -----------
 ############################################
 
-algo='dds'
+algo='dds' 
 target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model
 network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
 condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
@@ -13,7 +13,7 @@ K=2000 # Number of steps in the process
 sigma=1.0 # Noise scale for the backward process
 lr=0.0001 # Learning rate
 batch_size=128 # Batch size
-num_steps=1000 # Number of steps for training
+num_steps=20 # Number of steps for training
 if_logZ=true # calculate logZ during training
 seed=42 # Random seed for reproducibility
 if_train=true # Whether to train the model
