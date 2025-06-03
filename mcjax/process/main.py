@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--num_steps",  type=int, default=1000)
     parser.add_argument("--if_logZ",    type=str2bool, default=False)
-    parser.add_argument("--seed",       type=int, default=0)
+    parser.add_argument("--seed",       type=int, default=42)
     parser.add_argument("--if_train",   type=str2bool, default=False)
     parser.add_argument("--if_animation", type=str2bool, default=True)
     parser.add_argument("--model_path", type=str, default="model_params.pkl")
