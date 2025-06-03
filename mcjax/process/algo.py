@@ -14,7 +14,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
 from losses import DDSLoss, IDEMLoss
-from trainer import Trainer
+from trainer import Trainer, IDEMTrainer
 
 class BaseAlgorithm(ABC):
     """
@@ -564,8 +564,8 @@ class IDEMAlgorithm(BaseAlgorithm):
         Note: You must implement or provide a replay buffer that
         holds (x0) samples, which get updated after each outer iteration.
         """
-        trainer = Trainer(
-            algorithm=self,
+        trainer = IDEMTrainer(
+            buffer=self.buffer,
             process=self.ou,
             init_dist=self.init_dist,
             target_dist=self.target_dist,
@@ -573,9 +573,9 @@ class IDEMAlgorithm(BaseAlgorithm):
             loss_obj=self.loss_obj,
             state=self.state,
             batch_size=self.cfg.batch_size,
-            num_steps=self.cfg.num_steps,
-            # You may add additional arguments to Trainer (e.g., buffer management),
-            # depending on how your Trainer is implemented.
+            outer_iters=self.cfg.outer_iters,
+            inner_iters=self.cfg.inner_iters,
+            num_samples_per_outer=self.cfg.num_samples_per_outer,
         )
         return trainer.run(rng_key)
 

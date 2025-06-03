@@ -40,6 +40,10 @@ def parse_args():
     parser.add_argument("--if_animation", type=str2bool, default=True)
     parser.add_argument("--model_path", type=str, default="model_params.pkl")
     parser.add_argument("--results_dir", type=str, default="results")
+    parser.add_argument("--buffer_size", type=int, default=10000)
+    parser.add_argument("--inner_iters", type=int, default=100)
+    parser.add_argument("--outer_iters", type=int, default=100)
+    parser.add_argument("--num_samples_per_outer", type=int, default=1000)
     return parser.parse_args()
 
 
