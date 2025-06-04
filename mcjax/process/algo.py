@@ -383,7 +383,7 @@ class IDEMAlgorithm(BaseAlgorithm):
                 idx, size = carry
                 self.data = self.data.at[idx].set(x_np[i])
                 idx = (idx + 1) % self.max_size
-                size = min(size + 1, self.max_size)
+                size = jnp.minimum(size + 1, self.max_size)
                 return idx, size
             self.idx, self.size = jax.lax.fori_loop(0, n, body, (self.idx, self.size))
 
