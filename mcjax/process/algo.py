@@ -462,7 +462,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         key, sub = jr.split(key)
         dummy_x = jnp.zeros((config.batch_size, self.data_dim))
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.int32)
-        self.params = self.model.init(sub, dummy_x, dummy_t)
+        initial_params = self.model.init(sub, dummy_x, dummy_t)
 
         # ----------------------------------------------------------------------
         # 8) Set up optimizer (Adam) and Flax train state
@@ -470,7 +470,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         self.opt = optax.adam(config.lr)
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
-            params=self.params,
+            params=initial_params,
             tx=self.opt
         )
 
