@@ -14,7 +14,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
 from losses import DDSLoss, IDEMLoss
-from trainer import Trainer, IDEMTrainer
+from trainer import Trainer, InnerTrainer
 
 class BaseAlgorithm(ABC):
     """
@@ -65,12 +65,23 @@ class BaseAlgorithm(ABC):
         """
         pass
 
-    @abstractmethod
-    def sample(self, params, rng_key, num_samples):
+    def sample(self, params, rng_key, num_samples: int):
         """
-        After training, generate `num_samples` samples from learned sampler.
+        Generate samples by running reverse OU chain.
         """
-        pass
+        @jax.jit
+        def generate(params, key):
+            key, sub = jr.split(key)
+            yK = self.init_dist.sample(sub, num_samples)
+            def body(carry, k):
+                y_next, key_ = carry
+                key_, yk = self.ou.reverse_step(key_, y_next, k, self.score_fn, params)
+                return (yk, key_), yk
+            (y0, _), seq = jax.lax.scan(
+                body, (yK, key), jnp.arange(self.ou.K)
+            )
+            return seq  # shape (K, num_samples, dim)
+        return generate(params, rng_key)   
 
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
@@ -136,11 +147,9 @@ class BaseAlgorithm(ABC):
          - self.init_dist, self.target_dist to sample enough points for KDE/contour
          - self.cfg.K, self.cfg.results_dir, etc.
         """
-        import matplotlib.pyplot as plt
-        from matplotlib.animation import FuncAnimation, FFMpegWriter
+    
 
         if self.data_dim == 1:
-            from scipy.stats import gaussian_kde
 
             fig, ax = plt.subplots(figsize=(10, 6))
             # Plot initial‐ and target‐density reference lines
@@ -351,24 +360,6 @@ class DDSAlgorithm(BaseAlgorithm):
         )
         return trainer.run(rng_key)
 
-    def sample(self, params, rng_key, num_samples: int):
-        """
-        Generate samples by running reverse OU chain.
-        """
-        @jax.jit
-        def generate(params, key):
-            key, sub = jr.split(key)
-            yK = self.init_dist.sample(sub, num_samples)
-            def body(carry, k):
-                y_next, key_ = carry
-                key_, yk = self.ou.reverse_step(key_, y_next, k, self.score_fn, params)
-                return (yk, key_), yk
-            (y0, _), seq = jax.lax.scan(
-                body, (yK, key), jnp.arange(self.ou.K)
-            )
-            return seq  # shape (K, num_samples, dim)
-        return generate(params, rng_key)   
-
 class IDEMAlgorithm(BaseAlgorithm):
     """
     Implements the iDEM sampler (Iterated Denoising Energy Matching).
@@ -388,21 +379,23 @@ class IDEMAlgorithm(BaseAlgorithm):
             """
             x_np = jnp.asarray(x)  # copy to host RAM
             n = x_np.shape[0]
-            for i in range(n):
-                self.data[self.idx] = x_np[i]
-                self.idx = (self.idx + 1) % self.max_size
-                self.size = min(self.size + 1, self.max_size)
+            def body(i, carry):
+                idx, size = carry
+                self.data = self.data.at[idx].set(x_np[i])
+                idx = (idx + 1) % self.max_size
+                size = min(size + 1, self.max_size)
+                return idx, size
+            self.idx, self.size = jax.lax.fori_loop(0, n, body, (self.idx, self.size))
 
-        def sample(self, batch_size: int) -> jnp.ndarray:
+        def sample(self, key, batch_size: int) -> jnp.ndarray:
             """
             Draw `batch_size` points uniformly at random from the stored data.
             Returns a JAX array of shape (batch_size, data_dim).
             """
             if self.size == 0:
                 raise ValueError("ReplayBuffer is empty—cannot sample.")
-            idxs = jr.randint(0, self.size, size=batch_size)
+            idxs = jr.randint(key, (batch_size,), 0, self.size)
             return jnp.array(self.data[idxs])
-
 
     def __init__(self, config):
         # ----------------------------------------------------------------------
@@ -511,8 +504,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         # ----------------------------------------------------------------------
         # 12) Build the iDEM loss object
         # ----------------------------------------------------------------------
-        self.loss_obj = IDEMLoss(K=1000, sigma_fn=self.sigma_fn)
-
+        self.loss_obj = self.make_loss()
 
     def make_score_fn(self):
         """
@@ -555,48 +547,58 @@ class IDEMAlgorithm(BaseAlgorithm):
         Instantiate the IDEMLoss with the appropriate number of Monte Carlo samples
         and the noise schedule σ(t).
         """
-        return IDEMLoss(K=self.cfg.mc_K, sigma_fn=self.sigma_fn)
+        return IDEMLoss(K=1000, sigma_fn=self.sigma_fn)
 
     def train(self, rng_key):
         """
-        Run the training loop (using a generic Trainer).
-        The Trainer will call self.loss_obj(params, key, buffer, target_dist, score_fn, batch_size).
-        Note: You must implement or provide a replay buffer that
-        holds (x0) samples, which get updated after each outer iteration.
-        """
-        trainer = IDEMTrainer(
-            buffer=self.buffer,
-            process=self.ou,
-            init_dist=self.init_dist,
-            target_dist=self.target_dist,
-            score_fn=self.score_fn,
-            loss_obj=self.loss_obj,
-            state=self.state,
-            batch_size=self.cfg.batch_size,
-            outer_iters=self.cfg.outer_iters,
-            inner_iters=self.cfg.inner_iters,
-            num_samples_per_outer=self.cfg.num_samples_per_outer,
-        )
-        return trainer.run(rng_key)
+        The outer loop of iDEM:
+          for each of outer_iters:
+            1) sample new x₀ via reverse SDE (integrate_reverse)
+            2) buffer.add(new_x₀)
+            3) run inner_iters gradient steps (via InnerTrainer)
 
-    def sample(self, params, rng_key, num_samples: int):
+        Returns (final_params, final_key, all_loss_values).
         """
-        Generate fresh x0 samples by running the reverse OU chain (same as DDS).
-        Returns a sequence of intermediate y_k of shape (K, num_samples, data_dim).
-        """
-        @jax.jit
-        def generate(params, key):
+        key = rng_key
+        all_losses = []
+        logz_vals = jnp.zeros((self.cfg.outer_iters,))
+        logz_vars = jnp.zeros_like(logz_vals)
+
+        for outer in range(self.cfg.outer_iters):
+            # ─── Outer: generate new x₀’s and add to buffer ─────────────────
             key, sub = jr.split(key)
-            yK = self.init_dist.sample(sub, num_samples)
+            new_x0s, key = self.sample(self.state.params, sub, self.cfg.num_samples_per_outer)
+            # new_x0s: shape (num_samples_per_outer, data_dim)
+            self.buffer.add(new_x0s)
 
-            def body(carry, k):
-                y_next, key_ = carry
-                key_, yk = self.ou.reverse_step(key_, y_next, k, self.score_fn, params)
-                return (yk, key_), yk
+            # ─── (Optional) Estimate logZ here if you want, using self.estimate_logZ(...) ─
+            if self.cfg.if_logZ:
+                key, sub_z = jr.split(key)
+                logz = self.estimate_logZ(self.state.params, sub_z, num_samples=self.cfg.num_samples_per_outer)
+                # store logZ means/vars
+                logz_vals = logz_vals.at[outer].set(jnp.mean(logz))
+                logz_vars = logz_vars.at[outer].set(jnp.var(logz))
 
-            (y0, _), seq = jax.lax.scan(
-                body, (yK, key), jnp.arange(self.ou.K)
+            # ─── Inner: run `inner_iters` gradient steps via InnerTrainer ─────────────────
+            inner_trainer = InnerTrainer(
+                algo=self,
+                loss_obj=self.loss_obj,
+                state=self.state,
+                batch_size=self.cfg.batch_size,
+                inner_iters=self.cfg.inner_iters
             )
-            return seq  # shape: (K, num_samples, data_dim)
+            self.state, key, losses = inner_trainer.run(key)
+            all_losses.append(losses)
 
-        return generate(params, rng_key)
+            # Optional print of the last inner loss for debugging
+            last_loss = losses[-1]
+            jax.debug.print(
+                "[Outer {}/{}] last_inner_loss = {:.5f}",
+                outer+1, self.cfg.outer_iters, last_loss
+            )
+
+        # Concatenate all inner losses across outer iterations
+        all_losses = jnp.concatenate(all_losses, axis=0)  # shape: (outer_iters * inner_iters,)
+
+        return self.state.params, key, all_losses, logz_vals, logz_vars
+        
