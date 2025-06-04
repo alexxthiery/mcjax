@@ -393,7 +393,9 @@ class IDEMAlgorithm(BaseAlgorithm):
             Draw `batch_size` points uniformly at random from the stored data.
             Returns a JAX array of shape (batch_size, data_dim).
             """
-            assert self.size > 0, "ReplayBuffer is empty. Cannot sample."
+            # make the code be JIT-compatible:
+            # assert self.size > 0, "ReplayBuffer is empty. Cannot sample."
+
             idxs = jr.randint(key, (batch_size,), 0, self.size)
             return jnp.array(self.data[idxs])
 
