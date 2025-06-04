@@ -124,22 +124,22 @@ class InnerTrainer:
         # JIT‐compile a loss‐and‐grad function that calls IDEMLoss:
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_fn, argnums=0),
-            static_argnums=()  # no static args here
+            static_argnums=(2,3,4,5)  # no static args here
         )
         # JIT‐compile one train_step (computes loss+grad, applies optimizer)
         self.train_step = jax.jit(self._train_step, static_argnums=())
 
-    def _loss_fn(self, params, key):
+    def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size):
         """
         Wrap IDEMLoss.  We draw a minibatch from algo.buffer inside IDEMLoss itself.
         """
         return self.loss_obj(
             params=params,
             key=key,
-            buffer=self.algo.buffer,
-            target_dist=self.algo.target_dist,
-            score_fn=self.algo.score_fn,
-            batch_size=self.batch_size
+            buffer=buffer,
+            target_dist=target_dist,
+            score_fn=score_fn,
+            batch_size=batch_size
         )
 
     def _train_step(self, state, key):
