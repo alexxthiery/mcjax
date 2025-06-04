@@ -127,7 +127,7 @@ class InnerTrainer:
             static_argnums=(2,3,4,5)  # no static args here
         )
         # JIT‐compile one train_step (computes loss+grad, applies optimizer)
-        self.train_step = jax.jit(self._train_step, static_argnums=())
+        self.train_step = jax.jit(self._train_step, static_argnums=(2,3,4,5))
 
     def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size):
         """
@@ -142,12 +142,12 @@ class InnerTrainer:
             batch_size=batch_size
         )
 
-    def _train_step(self, state, key):
+    def _train_step(self, state, key, buffer, target_dist, score_fn, batch_size):
         """
         One gradient step on IDEMLoss.  Returns (new_state, loss_scalar).
         """
         params = state.params
-        (loss, grads) = self.loss_and_grad(params, key)
+        (loss, grads) = self.loss_and_grad(params, key, buffer, target_dist, score_fn, batch_size)
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
@@ -162,7 +162,7 @@ class InnerTrainer:
         def inner_body(carry, _unused):
             state, key = carry
             key, sub = jr.split(key)
-            new_state, loss = self.train_step(state, sub)
+            new_state, loss = self.train_step(state, sub, self.algo.buffer, self.algo.target_dist, self.algo.score_fn, self.batch_size)
             return (new_state, key), loss
 
         init_carry = (self.state, rng_key)
