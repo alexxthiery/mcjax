@@ -107,7 +107,7 @@ class IDEMLoss(BaseLoss):
         """
         # Draw a batch of x0 ∼ buffer
         key, sub = jr.split(key)
-        x0 = self.buffer.sample(sub, batch_size)    # shape: (B, d, ...)
+        x0 = jnp.asarray(self.buffer.sample(sub, batch_size))    # shape: (B, d, ...)
 
         # Sample t ∼ Uniform(0,1) for each x0 in the batch
         key, sub = jr.split(key)
