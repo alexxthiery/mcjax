@@ -114,8 +114,7 @@ class InnerTrainer:
       - inner_iters: how many gradient steps to perform
     """
 
-    def __init__(self, buffer, target_dist, score_fn, loss_obj, state: train_state.TrainState, batch_size: int, inner_iters: int):
-        self.buffer = buffer
+    def __init__(self, target_dist, score_fn, loss_obj, state: train_state.TrainState, batch_size: int, inner_iters: int):
         self.target_dist = target_dist
         self.score_fn = score_fn
         self.loss_obj = loss_obj
@@ -126,30 +125,29 @@ class InnerTrainer:
         # JIT‐compile a loss‐and‐grad function that calls IDEMLoss:
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_fn, argnums=0),
-            static_argnums=(0,2,3,4,5,6) 
+            static_argnums=(2,3,4,5) 
         )
         # JIT‐compile one train_step (computes loss+grad, applies optimizer)
-        self.train_step = jax.jit(self._train_step, static_argnums=(0,2,3,4,5,6))
+        self.train_step = jax.jit(self._train_step, static_argnums=(2,3,4,5))
 
-    def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size,loss_obj):
+    def _loss_fn(self, params, key, target_dist, score_fn, batch_size,loss_obj):
         """
         Wrap IDEMLoss.  We draw a minibatch from buffer inside IDEMLoss itself.
         """
         return loss_obj(
             params=params,
             key=key,
-            buffer=buffer,
             target_dist=target_dist,
             score_fn=score_fn,
             batch_size=batch_size
         )
 
-    def _train_step(self, state, key, buffer, target_dist, score_fn, batch_size,loss_obj):
+    def _train_step(self, state, key, target_dist, score_fn, batch_size,loss_obj):
         """
         One gradient step on IDEMLoss.  Returns (new_state, loss_scalar).
         """
         params = state.params
-        (loss, grads) = self.loss_and_grad(params, key, buffer, target_dist, score_fn, batch_size,loss_obj)
+        (loss, grads) = self.loss_and_grad(params, key, target_dist, score_fn, batch_size,loss_obj)
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
@@ -164,7 +162,7 @@ class InnerTrainer:
         def inner_body(carry, _unused):
             state, key = carry
             key, sub = jr.split(key)
-            new_state, loss = self.train_step(state, sub, self.buffer, self.target_dist, self.score_fn, self.batch_size,self.loss_obj)
+            new_state, loss = self.train_step(state, sub, self.target_dist, self.score_fn, self.batch_size,self.loss_obj)
             return (new_state, key), loss
 
         init_carry = (self.state, rng_key)

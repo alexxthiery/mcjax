@@ -548,7 +548,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         Instantiate the IDEMLoss with the appropriate number of Monte Carlo samples
         and the noise schedule σ(t).
         """
-        return IDEMLoss(K=1000, sigma_fn=self.sigma_fn)
+        return IDEMLoss(K=1000, sigma_fn=self.sigma_fn,buffer=self.buffer)
 
     def train(self, rng_key):
         """
@@ -589,7 +589,6 @@ class IDEMAlgorithm(BaseAlgorithm):
 
             # ─── Inner: run `inner_iters` gradient steps via InnerTrainer ─────────────────
             inner_trainer = InnerTrainer(
-                buffer=self.buffer,
                 target_dist=self.target_dist,
                 score_fn=self.score_fn,
                 loss_obj=self.loss_obj,
