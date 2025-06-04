@@ -85,7 +85,7 @@ class IDEMLoss(BaseLoss):
     Implements the Iterated Denoising Energy Matching (iDEM) inner-loop loss:
       L_DEM(x_t, t) = || S_K(x_t, t) - s_theta(x_t, t) ||^2,
     """
-    def __init__(self, K: int, sigma_fn: callable, buffer):
+    def __init__(self, K: int, sigma_fn: callable, buffer, target_dist, score_fn):
         """
         Args:
           K: number of Monte Carlo samples used in estimating the score S_K.
@@ -93,13 +93,13 @@ class IDEMLoss(BaseLoss):
         self.K = K
         self.sigma_fn = sigma_fn  # (geometric) noise schedule
         self.buffer = buffer  # a Buffer instance to sample x0 from
+        self.target_dist = target_dist
+        self.score_fn = score_fn  # Store score_fn here
 
     @partial(jax.jit, static_argnums=(0,))
     def __call__(self,
                 params,
                 key: jr.PRNGKey,
-                target_dist,     
-                score_fn,        # sθ(params, t, x_t) → R^d
                 batch_size: int):
         """
         Returns:
@@ -137,8 +137,8 @@ class IDEMLoss(BaseLoss):
             # evaluate log-density and score at each of the K samples:
             #    logp_MC[i] = log p_target(x0_MC[i])
             #    grad_logp_MC[i] = ∇_x log p_target(x0_MC[i])
-            logp_MC = target_dist.batch(x0_MC)      # → (K,)
-            grad_logp_MC = target_dist.grad(x0_MC)   # → (K, d, …)
+            logp_MC = self.target_dist.batch(x0_MC)      # → (K,)
+            grad_logp_MC = self.target_dist.grad(x0_MC)   # → (K, d, …)
 
             # d) form a numerically‐stable softmax over {logp_MC}:
             #    w_norm[i] = exp(logp_MC[i] - logsumexp(logp_MC))
@@ -162,7 +162,7 @@ class IDEMLoss(BaseLoss):
             keys_batch # shape: (B,)
         )  # → (B, d, …)
 
-        s_pred = score_fn(params, t, x_t)  # → (B, d, …)
+        s_pred = self.score_fn(params, t, x_t)  # → (B, d, …)
 
         # Compute per-example squared ‖S_K - s_pred‖² and average:
         sq_err = jnp.sum((S_K_batch - s_pred) ** 2,
