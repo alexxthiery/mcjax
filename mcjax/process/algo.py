@@ -387,7 +387,8 @@ class IDEMAlgorithm(BaseAlgorithm):
             if self.size == 0:
                 raise ValueError("ReplayBuffer is empty—cannot sample.")
             idxs = jr.randint(sub, (batch_size,), 0, self.size)  # uses self.size as a Python int
-            selected = jnp.array(self.data[np.asarray(idxs)])
+            buf_jax = jnp.asarray(self.data)
+            selected = buf_jax[idxs]
             return selected, key
 
     def __init__(self, config):
