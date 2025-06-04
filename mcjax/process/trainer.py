@@ -124,10 +124,13 @@ class InnerTrainer:
         # JIT‐compile a loss‐and‐grad function that calls IDEMLoss:
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_fn, argnums=0),
-            static_argnums=(2,3,4,5,6) 
+            static_argnames=('buffer', 'target_dist', 'score_fn', 'batch_size', 'loss_obj')
         )
         # JIT‐compile one train_step (computes loss+grad, applies optimizer)
-        self.train_step = jax.jit(self._train_step, static_argnums=(2,3,4,5,6))
+        self.train_step = jax.jit(
+            self._train_step,
+            static_argnames=('buffer', 'target_dist', 'score_fn', 'batch_size', 'loss_obj')
+        )
 
     def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size,loss_obj):
         """
