@@ -3,7 +3,7 @@ import jax
 import jax.random as jr
 import jax.numpy as jnp
 from functools import partial
-from scipy.special import logsumexp
+from jax.scipy.special import logsumexp
 
 class BaseLoss(ABC):
     """Abstract interface for any training loss."""
@@ -142,7 +142,6 @@ class IDEMLoss(BaseLoss):
 
             # d) form a numerically‐stable softmax over {logp_MC}:
             #    w_norm[i] = exp(logp_MC[i] - logsumexp(logp_MC))
-            print(f"Shape of logp_MC: {logp_MC.shape}")  # Debugging line
             lse = logsumexp(logp_MC)                # scalar
             w_norm = jnp.exp(logp_MC - lse)         # → (K,)
 
