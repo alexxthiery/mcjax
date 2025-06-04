@@ -187,7 +187,7 @@ class BaseAlgorithm(ABC):
                 time_text.set_text(f'Step: {frame}/{self.cfg.K}')
                 return line, time_text
 
-            ani = FuncAnimation(
+            ani = animation.FuncAnimation(
                 fig=fig,
                 func=animate,
                 frames=self.cfg.K,
