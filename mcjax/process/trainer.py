@@ -124,16 +124,16 @@ class InnerTrainer:
         # JIT‐compile a loss‐and‐grad function that calls IDEMLoss:
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_fn, argnums=0),
-            static_argnums=(2,3,4,5)  # no static args here
+            static_argnums=(2,3,4,5,6) 
         )
         # JIT‐compile one train_step (computes loss+grad, applies optimizer)
-        self.train_step = jax.jit(self._train_step, static_argnums=(2,3,4,5))
+        self.train_step = jax.jit(self._train_step, static_argnums=(2,3,4,5,6))
 
-    def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size):
+    def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size,loss_obj):
         """
         Wrap IDEMLoss.  We draw a minibatch from algo.buffer inside IDEMLoss itself.
         """
-        return self.loss_obj(
+        return loss_obj(
             params=params,
             key=key,
             buffer=buffer,
@@ -142,12 +142,12 @@ class InnerTrainer:
             batch_size=batch_size
         )
 
-    def _train_step(self, state, key, buffer, target_dist, score_fn, batch_size):
+    def _train_step(self, state, key, buffer, target_dist, score_fn, batch_size,loss_obj):
         """
         One gradient step on IDEMLoss.  Returns (new_state, loss_scalar).
         """
         params = state.params
-        (loss, grads) = self.loss_and_grad(params, key, buffer, target_dist, score_fn, batch_size)
+        (loss, grads) = self.loss_and_grad(params, key, buffer, target_dist, score_fn, batch_size,loss_obj)
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
@@ -162,7 +162,7 @@ class InnerTrainer:
         def inner_body(carry, _unused):
             state, key = carry
             key, sub = jr.split(key)
-            new_state, loss = self.train_step(state, sub, self.algo.buffer, self.algo.target_dist, self.algo.score_fn, self.batch_size)
+            new_state, loss = self.train_step(state, sub, self.algo.buffer, self.algo.target_dist, self.algo.score_fn, self.batch_size,self.loss_obj)
             return (new_state, key), loss
 
         init_carry = (self.state, rng_key)
