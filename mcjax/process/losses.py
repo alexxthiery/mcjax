@@ -96,7 +96,7 @@ class IDEMLoss(BaseLoss):
         self.target_dist = target_dist
         self.score_fn = score_fn  # Store score_fn here
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,3))
     def __call__(self,
                 params,
                 key: jr.PRNGKey,
