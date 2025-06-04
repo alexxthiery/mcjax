@@ -9,6 +9,7 @@ from functools import partial
 from scipy.stats import gaussian_kde
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
+from jax.tree_util import tree_map
 
 from models import MLPModel, ResBlockModel
 from ou import OU
@@ -563,6 +564,12 @@ class IDEMAlgorithm(BaseAlgorithm):
         all_losses = []
         logz_vals = jnp.zeros((self.cfg.outer_iters,))
         logz_vars = jnp.zeros_like(logz_vals)
+
+        ###################### For debugging ######################
+        def check_valid(x):
+            if not isinstance(x, (jnp.ndarray, float, int)):
+                raise TypeError(f"Invalid parameter type: {type(x)}")
+        tree_map(check_valid, self.state.params)
 
         for outer in range(self.cfg.outer_iters):
             # ─── Outer: generate new x₀’s and add to buffer ─────────────────
