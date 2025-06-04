@@ -114,8 +114,10 @@ class InnerTrainer:
       - inner_iters: how many gradient steps to perform
     """
 
-    def __init__(self, algo, loss_obj, state: train_state.TrainState, batch_size: int, inner_iters: int):
-        self.algo = algo
+    def __init__(self, buffer, target_dist, score_fn, loss_obj, state: train_state.TrainState, batch_size: int, inner_iters: int):
+        self.buffer = buffer
+        self.target_dist = target_dist
+        self.score_fn = score_fn
         self.loss_obj = loss_obj
         self.state = state
         self.batch_size = batch_size
@@ -131,7 +133,7 @@ class InnerTrainer:
 
     def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size,loss_obj):
         """
-        Wrap IDEMLoss.  We draw a minibatch from algo.buffer inside IDEMLoss itself.
+        Wrap IDEMLoss.  We draw a minibatch from buffer inside IDEMLoss itself.
         """
         return loss_obj(
             params=params,
@@ -162,7 +164,7 @@ class InnerTrainer:
         def inner_body(carry, _unused):
             state, key = carry
             key, sub = jr.split(key)
-            new_state, loss = self.train_step(state, sub, self.algo.buffer, self.algo.target_dist, self.algo.score_fn, self.batch_size,self.loss_obj)
+            new_state, loss = self.train_step(state, sub, self.buffer, self.target_dist, self.score_fn, self.batch_size,self.loss_obj)
             return (new_state, key), loss
 
         init_carry = (self.state, rng_key)

@@ -582,7 +582,9 @@ class IDEMAlgorithm(BaseAlgorithm):
 
             # ─── Inner: run `inner_iters` gradient steps via InnerTrainer ─────────────────
             inner_trainer = InnerTrainer(
-                algo=self,
+                buffer=self.buffer,
+                target_dist=self.target_dist,
+                score_fn=self.score_fn,
                 loss_obj=self.loss_obj,
                 state=self.state,
                 batch_size=self.cfg.batch_size,
