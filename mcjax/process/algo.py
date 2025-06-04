@@ -388,6 +388,7 @@ class IDEMAlgorithm(BaseAlgorithm):
                 return idx, size
             self.idx, self.size = jax.lax.fori_loop(0, n, body, (self.idx, self.size))
 
+        @partial(jax.jit, static_argnums=(0,2))
         def sample(self, key, batch_size: int) -> jnp.ndarray:
             """
             Draw `batch_size` points uniformly at random from the stored data.
