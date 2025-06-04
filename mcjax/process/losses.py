@@ -142,6 +142,7 @@ class IDEMLoss(BaseLoss):
 
             # d) form a numerically‐stable softmax over {logp_MC}:
             #    w_norm[i] = exp(logp_MC[i] - logsumexp(logp_MC))
+            print(f"Shape of logp_MC: {logp_MC.shape}")  # Debugging line
             lse = logsumexp(logp_MC)                # scalar
             w_norm = jnp.exp(logp_MC - lse)         # → (K,)
 
