@@ -132,7 +132,7 @@ class InnerTrainer:
             static_argnames=('buffer', 'target_dist', 'score_fn', 'batch_size', 'loss_obj')
         )
 
-    def _loss_fn(self, params, key, buffer, target_dist, score_fn, batch_size,loss_obj):
+    def _loss_fn(self, params, key, *, buffer, target_dist, score_fn, batch_size,loss_obj):
         """
         Wrap IDEMLoss.  We draw a minibatch from algo.buffer inside IDEMLoss itself.
         """
@@ -145,12 +145,13 @@ class InnerTrainer:
             batch_size=batch_size
         )
 
-    def _train_step(self, state, key, buffer, target_dist, score_fn, batch_size,loss_obj):
+    def _train_step(self, state, key, *, buffer, target_dist, score_fn, batch_size,loss_obj):
         """
         One gradient step on IDEMLoss.  Returns (new_state, loss_scalar).
         """
         params = state.params
-        (loss, grads) = self.loss_and_grad(params, key, buffer, target_dist, score_fn, batch_size,loss_obj)
+        (loss, grads) = self.loss_and_grad(params, key, buffer=buffer, target_dist=target_dist, \
+                                           score_fn=score_fn, batch_size=batch_size,loss_obj=loss_obj)
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
@@ -165,7 +166,8 @@ class InnerTrainer:
         def inner_body(carry, _unused):
             state, key = carry
             key, sub = jr.split(key)
-            new_state, loss = self.train_step(state, sub, self.algo.buffer, self.algo.target_dist, self.algo.score_fn, self.batch_size,self.loss_obj)
+            new_state, loss = self.train_step(state, sub, buffer=self.algo.buffer, target_dist=self.algo.target_dist, \
+                                              score_fn=self.algo.score_fn, batch_size=self.batch_size,loss_obj=self.loss_obj)
             return (new_state, key), loss
 
         init_carry = (self.state, rng_key)
