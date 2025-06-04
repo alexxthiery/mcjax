@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -369,36 +370,25 @@ class IDEMAlgorithm(BaseAlgorithm):
     class ReplayBuffer:
         def __init__(self, max_size: int, data_dim: int):
             self.max_size = max_size
-            self.data = jnp.zeros((max_size, data_dim), dtype=jnp.float32)
+            self.data = np.zeros((max_size, data_dim), dtype=np.float32)
             self.idx = 0
             self.size = 0
 
         def add(self, x: jnp.ndarray):
-            """
-            Insert a batch of points x (shape: (batch_size, data_dim)) into the buffer.
-            Overwrites oldest data once full.
-            """
-            x_np = jnp.asarray(x)  # copy to host RAM
+            x_np = np.asarray(x)  # to NumPy
             n = x_np.shape[0]
-            def body(i, carry):
-                idx, size = carry
-                self.data = self.data.at[idx].set(x_np[i])
-                idx = (idx + 1) % self.max_size
-                size = jnp.minimum(size + 1, self.max_size)
-                return idx, size
-            self.idx, self.size = jax.lax.fori_loop(0, n, body, (self.idx, self.size))
+            for i in range(n):
+                self.data[self.idx] = x_np[i]
+                self.idx = (self.idx + 1) % self.max_size
+                self.size = min(self.size + 1, self.max_size)
 
-        @partial(jax.jit, static_argnums=(0,2))
-        def sample(self, key, batch_size: int) -> jnp.ndarray:
-            """
-            Draw `batch_size` points uniformly at random from the stored data.
-            Returns a JAX array of shape (batch_size, data_dim).
-            """
-            # make the code be JIT-compatible:
-            # assert self.size > 0, "ReplayBuffer is empty. Cannot sample."
-
-            idxs = jr.randint(key, (batch_size,), 0, self.size)
-            return jnp.array(self.data[idxs])
+        def sample(self, key: jax.random.PRNGKey, batch_size: int):
+            key, sub = jr.split(key)
+            if self.size == 0:
+                raise ValueError("ReplayBuffer is empty—cannot sample.")
+            idxs = jr.randint(sub, (batch_size,), 0, self.size)  # uses self.size as a Python int
+            selected = jnp.array(self.data[np.asarray(idxs)])
+            return selected, key
 
     def __init__(self, config):
         # ----------------------------------------------------------------------
