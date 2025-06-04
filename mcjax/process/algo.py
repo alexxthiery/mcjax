@@ -567,7 +567,8 @@ class IDEMAlgorithm(BaseAlgorithm):
         for outer in range(self.cfg.outer_iters):
             # ─── Outer: generate new x₀’s and add to buffer ─────────────────
             key, sub = jr.split(key)
-            new_x0s, key = self.sample(self.state.params, sub, self.cfg.num_samples_per_outer)
+            seq = self.sample(self.state.params, sub, self.cfg.num_samples_per_outer)
+            new_x0s = seq[-1]  # take the last step of the reverse chain
             # new_x0s: shape (num_samples_per_outer, data_dim)
             self.buffer.add(new_x0s)
 
