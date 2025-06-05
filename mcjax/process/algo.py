@@ -152,7 +152,6 @@ class BaseAlgorithm(ABC):
     
 
         if self.data_dim == 1:
-
             fig, ax = plt.subplots(figsize=(10, 6))
             # Plot initial‐ and target‐density reference lines
             xs = jnp.linspace(-7, 10, 1000)
@@ -392,14 +391,10 @@ class IDEMAlgorithm(BaseAlgorithm):
             return selected, key
 
     def __init__(self, config):
-        # ----------------------------------------------------------------------
-        # 1) Save the config namespace/dict
-        # ----------------------------------------------------------------------
         self.cfg = config
 
-        # ----------------------------------------------------------------------
-        # 2) Build the target distribution
-        # ----------------------------------------------------------------------
+
+        # Build the target distribution
         if config.target_dist == 'gmm40':
             self.target_dist = GMM40()
             self.data_dim = 2
@@ -415,16 +410,13 @@ class IDEMAlgorithm(BaseAlgorithm):
         else:
             raise ValueError(f"Unknown target_dist: {config.target_dist}")
 
-        # ----------------------------------------------------------------------
-        # 3) Build the reference initial distribution
-        # ----------------------------------------------------------------------
+        # Build the reference initial distribution
         self.init_dist = IsotropicGauss(
             mu=jnp.zeros(self.data_dim), log_var=0.0
         )
 
-        # ----------------------------------------------------------------------
-        # 4) Create discrete timesteps / beta / alpha schedule for OU
-        # ----------------------------------------------------------------------
+
+        # Create discrete timesteps / beta / alpha schedule for OU
         K = config.K
         ts = jnp.arange(K, dtype=jnp.float32)
         if config.variable_ts:
@@ -434,14 +426,11 @@ class IDEMAlgorithm(BaseAlgorithm):
             beta = jnp.ones(K, dtype=jnp.float32) * 0.5
         alpha = 1.0 - jnp.exp(-2.0 * beta / K)
 
-        # ----------------------------------------------------------------------
-        # 5) Instantiate the OU forward/reverse process
-        # ----------------------------------------------------------------------
+        # Instantiate the OU forward/reverse process
         self.ou = OU(alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
 
-        # ----------------------------------------------------------------------
-        # 6) Build the neural network (MLP or ResBlock)
-        # ----------------------------------------------------------------------
+         
+        # Build the neural network (MLP or ResBlock)  
         if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=K)
         elif config.network_name == 'resblock':
@@ -449,18 +438,16 @@ class IDEMAlgorithm(BaseAlgorithm):
         else:
             raise ValueError(f"Unknown network_name: {config.network_name}")
 
-        # ----------------------------------------------------------------------
-        # 7) Initialize network parameters
-        # ----------------------------------------------------------------------
+         
+        # Initialize network parameters
         key = jr.PRNGKey(config.seed)
         key, sub = jr.split(key)
         dummy_x = jnp.zeros((config.batch_size, self.data_dim))
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.int32)
         initial_params = self.model.init(sub, dummy_x, dummy_t)
 
-        # ----------------------------------------------------------------------
-        # 8) Set up optimizer (Adam) and Flax train state
-        # ----------------------------------------------------------------------
+         
+        # Set up optimizer (Adam) and Flax train state
         self.opt = optax.adam(config.lr)
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
@@ -468,36 +455,31 @@ class IDEMAlgorithm(BaseAlgorithm):
             tx=self.opt
         )
 
-        # ----------------------------------------------------------------------
-        # 9) Build the score function (same conditioning logic as DDS)
-        # ----------------------------------------------------------------------
+         
+        # Build the score function (same conditioning logic as DDS)
         self.score_fn = self.make_score_fn()
 
-        # ----------------------------------------------------------------------
-        # 10) Define geometric σ(t) inside this class:
+         
+        # Define geometric σ(t) inside this class:
         #     σ(t) = σ_min * (σ_max/σ_min)^t      for t ∈ [0,1]
-        # ----------------------------------------------------------------------
         sigma_min = 0.1
         sigma_max = 5.0
 
         def sigma_fn(t):
-            # t can be a scalar or an array in [0,1]
             ratio = sigma_max / sigma_min
             return sigma_min * (ratio ** t)
 
         self.sigma_fn = sigma_fn
 
-        # ----------------------------------------------------------------------
-        # 11) Create the replay buffer (size from config.buffer_size)
-        # ----------------------------------------------------------------------
+         
+        # Create the replay buffer (size from config.buffer_size)
         self.buffer = IDEMAlgorithm.ReplayBuffer(
             max_size=config.buffer_size,
             data_dim=self.data_dim
         )
 
-        # ----------------------------------------------------------------------
-        # 12) Build the iDEM loss object
-        # ----------------------------------------------------------------------
+         
+        # Build the iDEM loss object
         self.loss_obj = self.make_loss()
 
     def make_score_fn(self):
@@ -544,57 +526,75 @@ class IDEMAlgorithm(BaseAlgorithm):
         return IDEMLoss(K=1000, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
+    @partial(jax.jit, static_argnums=(0))
     def train(self, rng_key):
         """
-        The outer loop of iDEM:
-          for each of outer_iters:
-            1) sample new x₀ via reverse SDE (integrate_reverse)
-            2) buffer.add(new_x₀)
-            3) run inner_iters gradient steps (via InnerTrainer)
-
-        Returns (final_params, final_key, all_loss_values).
+        JIT-compatible version using jax.lax.scan for outer loop.
+        Returns (final_params, key, all_losses, logz_vals, logz_vars)
         """
-        key = rng_key
-        all_losses = []
-        logz_vals = jnp.zeros((self.cfg.outer_iters,))
-        logz_vars = jnp.zeros_like(logz_vals)
+        # Initialize carry for scan: 
+        # (rng_key, train_state, buffer, logz_vals, logz_vars)
+        init_carry = (
+            rng_key,
+            self.state,
+            self.buffer,
+            jnp.zeros((self.cfg.outer_iters,)),
+            jnp.zeros((self.cfg.outer_iters,))
+        )
+        
+        def outer_step(carry, outer_idx):
+            key, state, buffer, logz_vals, logz_vars = carry
+            
+            # Sample new x₀'s and update buffer
+            key, subkey = jax.random.split(key)
+            seq = self.sample(state.params, subkey, self.cfg.num_samples_per_outer)
+            new_x0s = seq[-1]
+            buffer = buffer.add(new_x0s)  
+            
+            # Estimate logZ if required
+            def update_logZ(key):
+                key, sub_z = jax.random.split(key)
+                logz = self.estimate_logZ(state.params, sub_z, 
+                                          self.cfg.num_samples_per_outer)
+                logz_vals = logz_vals.at[outer_idx].set(jnp.mean(logz))
+                logz_vars = logz_vars.at[outer_idx].set(jnp.var(logz))
+                return key, logz_vals, logz_vars
+            # use jax.lax.cond to conditionally update logZ
+            key, logz_vals, logz_vars = jax.lax.cond(
+                self.cfg.if_logZ,
+                update_logZ,
+                lambda k: (k, logz_vals, logz_vars),
+                operand=key
+            )
 
-
-        for outer in range(self.cfg.outer_iters):
-            # ─── Outer: generate new x₀’s and add to buffer ─────────────────
-            key, sub = jr.split(key)
-            seq = self.sample(self.state.params, sub, self.cfg.num_samples_per_outer)
-            new_x0s = seq[-1]  # take the last step of the reverse chain
-            # new_x0s: shape (num_samples_per_outer, data_dim)
-            self.buffer.add(new_x0s)
-
-            # ─── (Optional) Estimate logZ here if you want, using self.estimate_logZ(...) ─
-            if self.cfg.if_logZ:
-                key, sub_z = jr.split(key)
-                logz = self.estimate_logZ(self.state.params, sub_z, num_samples=self.cfg.num_samples_per_outer)
-                # store logZ means/vars
-                logz_vals = logz_vals.at[outer].set(jnp.mean(logz))
-                logz_vars = logz_vars.at[outer].set(jnp.var(logz))
-
-            # ─── Inner: run `inner_iters` gradient steps via InnerTrainer ─────────────────
+            
+            # Run inner training
             inner_trainer = InnerTrainer(
                 loss_obj=self.loss_obj,
-                state=self.state,
+                state=state,
                 batch_size=self.cfg.batch_size,
-                inner_iters=self.cfg.inner_iters
+                inner_iters=self.cfg.inner_iters,
+                buffer=buffer  # Critical: buffer must be immutable/functional
             )
-            self.state, key, losses = inner_trainer.run(key)
-            all_losses.append(losses)
+            state, key, losses = inner_trainer.run(key)
+            
+            new_carry = (key, state, buffer, logz_vals, logz_vars)
+            output = losses  # Shape: (inner_iters,)
+            return new_carry, output
 
-            # Optional print of the last inner loss for debugging
-            last_loss = losses[-1]
-            jax.debug.print(
-                "[Outer {}/{}] last_inner_loss = {:.5f}",
-                outer+1, self.cfg.outer_iters, last_loss
-            )
-
-        # Concatenate all inner losses across outer iterations
-        all_losses = jnp.concatenate(all_losses, axis=0)  # shape: (outer_iters * inner_iters,)
-
-        return self.state.params, key, all_losses, logz_vals, logz_vars
+        # Execute scan over outer iterations
+        final_carry, all_losses = jax.lax.scan(
+            outer_step,
+            init_carry,
+            xs=jnp.arange(self.cfg.outer_iters)
+        )
         
+        # Unpack results
+        key, state, buffer, logz_vals, logz_vars = final_carry
+        self.state = state
+        self.buffer = buffer
+        
+        # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
+        all_losses_flat = all_losses.reshape(-1)
+        
+        return state.params, key, all_losses_flat, logz_vals, logz_vars
