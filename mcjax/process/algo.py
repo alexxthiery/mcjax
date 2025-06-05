@@ -393,7 +393,6 @@ class IDEMAlgorithm(BaseAlgorithm):
     def __init__(self, config):
         self.cfg = config
 
-
         # Build the target distribution
         if config.target_dist == 'gmm40':
             self.target_dist = GMM40()
@@ -574,7 +573,6 @@ class IDEMAlgorithm(BaseAlgorithm):
                 state=state,
                 batch_size=self.cfg.batch_size,
                 inner_iters=self.cfg.inner_iters,
-                buffer=buffer  # Critical: buffer must be immutable/functional
             )
             state, key, losses = inner_trainer.run(key)
             

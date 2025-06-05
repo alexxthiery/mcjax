@@ -107,7 +107,6 @@ class Trainer:
 class InnerTrainer:
     """
     Runs a fixed number of gradient‐descent steps on IDEMLoss, given:
-      - algo:       the IDEMAlgorithm instance (to access buffer, target_dist, score_fn, etc.)
       - loss_obj:   an IDEMLoss instance
       - state:      a Flax TrainState (holds .params and optimizer state)
       - batch_size: minibatch size for each gradient step
