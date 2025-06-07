@@ -10,7 +10,7 @@ from functools import partial
 from scipy.stats import gaussian_kde
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
-from jax.tree_util import tree_map
+from flax import struct
 
 from models import MLPModel, ResBlockModel
 from ou import OU
@@ -366,29 +366,58 @@ class IDEMAlgorithm(BaseAlgorithm):
     Implements the iDEM sampler (Iterated Denoising Energy Matching).
     """
 
+    @struct.dataclass
     class ReplayBuffer:
-        def __init__(self, max_size: int, data_dim: int):
-            self.max_size = max_size
-            self.data = np.zeros((max_size, data_dim), dtype=np.float32)
-            self.idx = 0
-            self.size = 0
+        """
+        A pure, functional replay buffer that can live inside jit/scans.
+        data:     array of shape (max_size, data_dim)
+        idx:      int: next write index
+        size:     int: current occupancy ≤ max_size
+        max_size: Python int, treated as static
+        """
+        data: jnp.ndarray           # shape (max_size, data_dim)
+        idx: jnp.ndarray            # scalar int32
+        size: jnp.ndarray           # scalar int32
+        max_size: int               # static, Python int
+
+        @classmethod
+        def create(cls, max_size: int, data_dim: int):
+            return cls(
+                data=jnp.zeros((max_size, data_dim), dtype=jnp.float32),
+                idx=jnp.zeros((), dtype=jnp.int32),
+                size=jnp.zeros((), dtype=jnp.int32),
+                max_size=max_size
+            )
 
         def add(self, x: jnp.ndarray):
-            x_np = np.asarray(x)  # to NumPy
-            n = x_np.shape[0]
-            for i in range(n):
-                self.data[self.idx] = x_np[i]
-                self.idx = (self.idx + 1) % self.max_size
-                self.size = min(self.size + 1, self.max_size)
+            """
+            returns a new ReplayBuffer with x stacked in.
+            x has shape (batch_size, data_dim).
+            """
+            batch_size = x.shape[0]
 
-        def sample(self, key: jax.random.PRNGKey, batch_size: int):
+            def body(i, carry):
+                data, idx, size = carry
+                data = data.at[idx].set(x[i])
+                idx = (idx + 1) % self.max_size
+                size = jnp.minimum(size + 1, self.max_size)
+                return (data, idx, size)
+
+            data, idx, size = jax.lax.fori_loop(
+                0, batch_size, body, (self.data, self.idx, self.size)
+            )
+            return IDEMAlgorithm.ReplayBuffer(data=data, idx=idx, size=size, max_size=self.max_size)
+
+        @partial(jax.jit, static_argnames=('batch_size',))
+        def sample(self, key: jr.PRNGKey, batch_size: int):
+            """
+            Pure functional sample: returns (samples, new_key).
+            samples has shape (batch_size, data_dim).
+            """
             key, sub = jr.split(key)
-            if self.size == 0:
-                raise ValueError("ReplayBuffer is empty—cannot sample.")
-            idxs = jr.randint(sub, (batch_size,), 0, self.size)  # uses self.size as a Python int
-            buf_jax = jnp.asarray(self.data)
-            selected = buf_jax[idxs]
-            return selected, key
+            # assume size > 0
+            idxs = jr.randint(sub, (batch_size,), 0, self.size)
+            return self.data[idxs], key
 
     def __init__(self, config):
         self.cfg = config
