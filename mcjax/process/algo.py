@@ -578,20 +578,22 @@ class IDEMAlgorithm(BaseAlgorithm):
             new_x0s = seq[-1]
             buffer = buffer.add(new_x0s)  
             
-            # Estimate logZ if required
-            def update_logZ(key):
-                key, sub_z = jax.random.split(key)
-                logz = self.estimate_logZ(state.params, sub_z, 
-                                          self.cfg.num_samples_per_outer)
+            def yes_branch(inputs):
+                key, logz_vals, logz_vars = inputs
+                key, sub = jax.random.split(key)
+                logz = self.estimate_logZ(state.params, sub, self.cfg.num_samples_per_outer)
                 logz_vals = logz_vals.at[outer_idx].set(jnp.mean(logz))
                 logz_vars = logz_vars.at[outer_idx].set(jnp.var(logz))
                 return key, logz_vals, logz_vars
-            # use jax.lax.cond to conditionally update logZ
+
+            def no_branch(inputs):
+                return inputs
+
             key, logz_vals, logz_vars = jax.lax.cond(
                 self.cfg.if_logZ,
-                update_logZ,
-                lambda k: (k, logz_vals, logz_vars),
-                operand=key
+                yes_branch,
+                no_branch,
+                operand=(key, logz_vals, logz_vars)
             )
 
             
