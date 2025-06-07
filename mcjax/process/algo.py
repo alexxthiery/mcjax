@@ -580,6 +580,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             output = losses  # Shape: (inner_iters,)
             return new_carry, output
 
+        jax.debug.print("Starting outer loop with {} iterations.", self.cfg.outer_iters)
         # Execute scan over outer iterations
         final_carry, all_losses = jax.lax.scan(
             outer_step,
