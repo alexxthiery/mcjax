@@ -384,8 +384,8 @@ class IDEMAlgorithm(BaseAlgorithm):
         def create(cls, max_size: int, data_dim: int):
             return cls(
                 data=jnp.zeros((max_size, data_dim), dtype=jnp.float32),
-                idx=jnp.zeros((), dtype=jnp.int32),
-                size=jnp.zeros((), dtype=jnp.int32),
+                idx=0,
+                size=0,
                 max_size=max_size
             )
 
@@ -501,10 +501,9 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Create the replay buffer (size from config.buffer_size)
-        self.buffer = IDEMAlgorithm.ReplayBuffer(
-            max_size=config.buffer_size,
-            data_dim=self.data_dim
-        )
+        self.buffer = IDEMAlgorithm.ReplayBuffer.create(max_size=config.buffer_size,
+                                  data_dim=self.data_dim)
+
 
          
         # Build the iDEM loss object
