@@ -626,4 +626,4 @@ class IDEMAlgorithm(BaseAlgorithm):
         # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
         all_losses_flat = all_losses.reshape(-1)
         
-        return state.params, key, all_losses_flat, logz_vals, logz_vars
+        return state, key, all_losses_flat, logz_vals, logz_vars
