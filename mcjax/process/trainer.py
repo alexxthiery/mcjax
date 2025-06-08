@@ -155,7 +155,6 @@ class InnerTrainer:
           - losses_array: jnp array of shape (inner_iters,) with each step’s loss
         """
         def inner_body(carry, _unused):
-            jax.debug.print("Inner step")
             state, key = carry
             key, sub = jr.split(key)
             new_state, loss = self.train_step(state, sub, self.batch_size,self.loss_obj)
