@@ -72,6 +72,7 @@ def main():
         final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
         t2 = time.time()
         print(f"Training finished in {t2 - t1:.2f} seconds.")
+        alg.state = final_state  # Update the state with final trained parameters
         # Save parameters
         with open(args.model_path, "wb") as f:
             pickle.dump(final_state.params, f)
@@ -89,7 +90,7 @@ def main():
         # Plot logZ (if computed)
         if args.if_logZ:
             fig, ax1 = plt.subplots()
-            x = 10 + jax.numpy.arange(args.num_steps // 10)*10
+            x = 10 + jax.numpy.arange(args.num_steps // 10)*10 if args.algo == "dds" else args.inner_iters + jax.numpy.arange(args.outer_iters) * args.inner_iters
             ax1.plot(x, logz_vars[:len(x)], color='C0', label="logZ var")
             ax1.set_xlabel("step")
             ax1.set_ylabel("var(logZ)", color='C0')
