@@ -66,6 +66,7 @@ def main():
     # Training or Load
     key = jr.PRNGKey(args.seed)
     if args.if_train:
+        print(f"Start training with {args.algo}")
         key, sub = jr.split(key)
         t1 = time.time()
         final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
