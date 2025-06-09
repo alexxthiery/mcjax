@@ -490,8 +490,8 @@ class IDEMAlgorithm(BaseAlgorithm):
          
         # Define geometric σ(t) inside this class:
         #     σ(t) = σ_min * (σ_max/σ_min)^t      for t ∈ [0,1]
-        sigma_min = 0.1
-        sigma_max = 5.0
+        sigma_min = 1e-5
+        sigma_max = 3.0
 
         def sigma_fn(t):
             ratio = sigma_max / sigma_min
@@ -550,7 +550,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         Instantiate the IDEMLoss with the appropriate number of Monte Carlo samples
         and the noise schedule σ(t).
         """
-        return IDEMLoss(K=100, sigma_fn=self.sigma_fn,buffer=self.buffer,\
+        return IDEMLoss(K=1000, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
     @partial(jax.jit, static_argnums=(0))

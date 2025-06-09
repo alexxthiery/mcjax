@@ -11,7 +11,7 @@ add_score=true # Add score term to the loss function
 variable_ts=true # Use variable time steps
 K=2000 # Number of steps in the process
 sigma=1.0 # Noise scale for the backward process
-lr=0.0001 # Learning rate
+lr=0.0005 # Learning rate
 batch_size=128 # Batch size
 num_steps=1000 # Number of steps for training
 if_logZ=true # calculate logZ during training
@@ -23,7 +23,7 @@ results_dir='results' # Path to save the results
 
 buffer_size=5000 # Buffer size for the training data in IDEM algorithm
 inner_iters=200 # Number of inner steps for the IDEM algorithm
-outer_iters=20 # Number of outer steps for the IDEM algorithm
+outer_iters=200 # Number of outer steps for the IDEM algorithm
 num_samples_per_outer=1000 # Number of samples per outer step for the IDEM algorithm
 
 
