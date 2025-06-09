@@ -570,7 +570,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         )
         
         def outer_step(carry, outer_idx):
-            jax.debug.print("Starting outer loop with {} iterations.", outer_idx)
+            jax.debug.print("Starting outer loop with {} iterations", outer_idx)
             key, state, buffer, logz_vals, logz_vars = carry
             
             # Sample new x₀'s and update buffer
@@ -615,7 +615,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         final_carry, all_losses = jax.lax.scan(
             outer_step,
             init_carry,
-            xs=jnp.arange(self.cfg.outer_iters)
+            jnp.arange(self.cfg.outer_iters)
         )
         
         # Unpack results
