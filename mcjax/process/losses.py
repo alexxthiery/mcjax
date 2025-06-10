@@ -122,7 +122,7 @@ class IDEMLoss(BaseLoss):
         x_t = x0 + sigma_t * eps    # → (B, d, …)
 
         # Define a function that, for one (x_t_single, t_single),
-        #    draws K samples x0_i ∼ N(x_t_single, σ_t^2), computes log p and ∇ log p,
+        #    draws K samples x0_i ∼ N(x_t_single, σ_t^2), computes log p and grad log p,
         #    and returns the weighted average of gradients
         def mc_estimate_single(x_t_single, t_single, key_single):
             sigma = self.sigma_fn(t_single)    
@@ -143,7 +143,7 @@ class IDEMLoss(BaseLoss):
 
             # compute weighted average of gradient vectors:
             expand_dims = (1,) * (grad_logp_MC.ndim - 1)
-            w_shaped = w_norm.reshape((self.K,) + expand_dims)  # → (K, 1, 1, …)
+            w_shaped = w_norm.reshape((self.K) + expand_dims)  # → (K, 1, 1, …)
             numerator = jnp.sum(w_shaped * grad_logp_MC, axis=0)  # → (d, …)
 
             return numerator

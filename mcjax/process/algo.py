@@ -550,7 +550,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         Instantiate the IDEMLoss with the appropriate number of Monte Carlo samples
         and the noise schedule σ(t).
         """
-        return IDEMLoss(K=1000, sigma_fn=self.sigma_fn,buffer=self.buffer,\
+        return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
     @partial(jax.jit, static_argnums=(0))
