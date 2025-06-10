@@ -143,7 +143,7 @@ class IDEMLoss(BaseLoss):
 
             # compute weighted average of gradient vectors:
             expand_dims = (1,) * (grad_logp_MC.ndim - 1)
-            w_shaped = w_norm.reshape((self.K) + expand_dims)  # → (K, 1, 1, …)
+            w_shaped = w_norm.reshape((self.K,) + expand_dims)  # → (K, 1, 1, …)
             numerator = jnp.sum(w_shaped * grad_logp_MC, axis=0)  # → (d, …)
 
             return numerator
