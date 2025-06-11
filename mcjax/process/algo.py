@@ -577,6 +577,8 @@ class IDEMAlgorithm(BaseAlgorithm):
             key, subkey = jax.random.split(key)
             seq = self.sample(state.params, subkey, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
+            # test: print new_x0s
+            jax.debug.print("New x0s: {}", new_x0s)
             buffer = buffer.add(new_x0s)  
             
             def yes_branch(inputs):
