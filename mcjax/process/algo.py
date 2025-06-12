@@ -363,7 +363,7 @@ class DDSAlgorithm(BaseAlgorithm):
 
 class IDEMAlgorithm(BaseAlgorithm):
     """
-    Implements the iDEM sampler (Iterated Denoising Energy Matching).
+    Implements the iDEM (Iterated Denoising Energy Matching).
     """
 
     @struct.dataclass
@@ -490,7 +490,7 @@ class IDEMAlgorithm(BaseAlgorithm):
          
         # Define geometric σ(t) inside this class:
         #     σ(t) = σ_min * (σ_max/σ_min)^t      for t ∈ [0,1]
-        sigma_min = 1e-5
+        sigma_min = 1e-2
         sigma_max = 3.0
 
         def sigma_fn(t):
@@ -521,9 +521,9 @@ class IDEMAlgorithm(BaseAlgorithm):
         target = self.target_dist
 
         def score_fn(params, k, y):
-            # k: int index in [0, K-1], y: shape (batch, data_dim)
-            batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-            nn1, nn2 = self.model.apply(params, y, batch_k)
+            t_continuous = k * (self.ou.K - 1)  # Scale to [0, K-1]
+            batch_t = jnp.full((y.shape[0],), t_continuous, dtype=jnp.float32)
+            nn1, nn2 = self.model.apply(params, y, batch_t)
 
             if condition == 'none':
                 return nn1
