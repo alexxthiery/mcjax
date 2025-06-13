@@ -634,6 +634,8 @@ class IDEMAlgorithm(BaseAlgorithm):
         # plot the buffer
         plt.figure(figsize=(10, 6))
         data = buffer.sample(jr.PRNGKey(0), 5000)[0]
+        # convert jnp.array to array
+        data = jax.device_get(data).flatten()
         plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
         # Plot target distribution
         x = jnp.linspace(-7, 10, 1000)
