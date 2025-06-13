@@ -585,28 +585,6 @@ class IDEMAlgorithm(BaseAlgorithm):
             # test: print new_x0s
             # jax.debug.print("New x0s: {}", new_x0s)
             buffer = buffer.add(new_x0s)  
-
-            ############ ----------------------- test ---------------------- ##############    
-            # plot the samples of buffer every 100 outer iterations
-            def draw_buffer_samples(key):
-                plt.subplots(figsize=(10, 6))
-                key, subkey = jr.split(key)
-                data = buffer.sample(subkey, 1000)[0]  # Sample 1000 points from buffer
-
-                plt.hist(data, bins=50, density=True, alpha=0.5)
-                plt.title(f"Buffer samples at outer {outer_idx}")
-                plt.xlabel('x')
-                plt.ylabel('Density')
-                plt.savefig(f"{self.cfg.results_dir}/buffer_samples_outer_{outer_idx}.png")
-            
-            jax.lax.cond(
-                outer_idx % 100 == 0,
-                draw_buffer_samples,
-                lambda _: None,
-                operand =key
-            )
-            #####################################################################
-
             
             def yes_branch(inputs):
                 key, logz_vals, logz_vars = inputs
@@ -651,6 +629,24 @@ class IDEMAlgorithm(BaseAlgorithm):
         key, state, buffer, logz_vals, logz_vars = final_carry
         self.state = state
         self.buffer = buffer
+
+        ########################### -test ###########################
+        # plot the buffer
+        plt.figure(figsize=(10, 6))
+        data = buffer.sample(jr.PRNGKey(0), 5000)[0]
+        plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
+        # Plot target distribution
+        x = jnp.linspace(-7, 10, 1000)
+        target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
+        target_kde = gaussian_kde(target_samples)
+        plt.plot(x, target_kde(x), 'g--', lw=2, label='Target Dist')
+        plt.title('Replay Buffer Samples')
+        plt.xlabel('x')
+        plt.ylabel('Density')
+        plt.legend()
+        plt.savefig(f"{self.cfg.results_dir}/buffer_samples.png")
+        ######################################################
+
         
         # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
         all_losses_flat = all_losses.reshape(-1)
