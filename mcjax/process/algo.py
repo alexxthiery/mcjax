@@ -586,21 +586,24 @@ class IDEMAlgorithm(BaseAlgorithm):
             # jax.debug.print("New x0s: {}", new_x0s)
             buffer = buffer.add(new_x0s)  
 
-            ############ test ##############    
+            ############ ----------------------- test ---------------------- ##############    
             # plot the samples of buffer every 100 outer iterations
-            if outer_idx % 100 == 0:
+            def draw_buffer_samples(outer_idx):
                 fig, ax = plt.subplots(figsize=(10, 6))
-                if self.data_dim == 1:
-                    ax.hist(buffer.data[:buffer.size, 0], bins=50, density=True, alpha=0.5)
-                    ax.set_title(f"Buffer samples at outer {outer_idx}")
-                    ax.set_xlabel('x')
-                    ax.set_ylabel('Density')
-                elif self.data_dim == 2:
-                    ax.scatter(buffer.data[:buffer.size, 0], buffer.data[:buffer.size, 1], s=5, alpha=0.5)
-                    ax.set_title(f"Buffer samples at outer {outer_idx}")
-                    ax.set_xlabel('x₁')
-                    ax.set_ylabel('x₂')
+                key, subkey = jax.random.split(key)
+                data = buffer.sample(subkey, 1000)[0]  # Sample 1000 points from buffer
+                ax.hist(data, bins=50, density=True, alpha=0.5)
+                ax.set_title(f"Buffer samples at outer {outer_idx}")
+                ax.set_xlabel('x')
+                ax.set_ylabel('Density')
                 plt.savefig(f"{self.cfg.results_dir}/buffer_samples_outer_{outer_idx}.png")
+            jax.lax.cond(
+                outer_idx % 100 == 0,
+                draw_buffer_samples,
+                lambda _: None,
+                operand=outer_idx
+            )
+            #####################################################################
 
             
             def yes_branch(inputs):
