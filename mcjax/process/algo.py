@@ -588,9 +588,9 @@ class IDEMAlgorithm(BaseAlgorithm):
 
             ############ ----------------------- test ---------------------- ##############    
             # plot the samples of buffer every 100 outer iterations
-            def draw_buffer_samples(outer_idx):
+            def draw_buffer_samples(key):
                 fig, ax = plt.subplots(figsize=(10, 6))
-                key, subkey = jax.random.split(key)
+                key, subkey = jr.split(key)
                 data = buffer.sample(subkey, 1000)[0]  # Sample 1000 points from buffer
                 ax.hist(data, bins=50, density=True, alpha=0.5)
                 ax.set_title(f"Buffer samples at outer {outer_idx}")
@@ -601,14 +601,14 @@ class IDEMAlgorithm(BaseAlgorithm):
                 outer_idx % 100 == 0,
                 draw_buffer_samples,
                 lambda _: None,
-                operand=outer_idx
+                operand =key
             )
             #####################################################################
 
             
             def yes_branch(inputs):
                 key, logz_vals, logz_vars = inputs
-                key, sub = jax.random.split(key)
+                key, sub = jr.split(key)
                 logz = self.estimate_logZ(state.params, sub, self.cfg.num_samples_per_outer)
                 logz_vals = logz_vals.at[outer_idx].set(jnp.mean(logz))
                 logz_vars = logz_vars.at[outer_idx].set(jnp.var(logz))
