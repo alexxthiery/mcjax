@@ -583,8 +583,25 @@ class IDEMAlgorithm(BaseAlgorithm):
             seq = self.sample(state.params, subkey, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             # test: print new_x0s
-            jax.debug.print("New x0s: {}", new_x0s)
+            # jax.debug.print("New x0s: {}", new_x0s)
             buffer = buffer.add(new_x0s)  
+
+            ############ test ##############    
+            # plot the samples of buffer every 100 outer iterations
+            if outer_idx % 100 == 0:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                if self.data_dim == 1:
+                    ax.hist(buffer.data[:buffer.size, 0], bins=50, density=True, alpha=0.5)
+                    ax.set_title(f"Buffer samples at outer {outer_idx}")
+                    ax.set_xlabel('x')
+                    ax.set_ylabel('Density')
+                elif self.data_dim == 2:
+                    ax.scatter(buffer.data[:buffer.size, 0], buffer.data[:buffer.size, 1], s=5, alpha=0.5)
+                    ax.set_title(f"Buffer samples at outer {outer_idx}")
+                    ax.set_xlabel('x₁')
+                    ax.set_ylabel('x₂')
+                plt.savefig(f"{self.cfg.results_dir}/buffer_samples_outer_{outer_idx}.png")
+
             
             def yes_branch(inputs):
                 key, logz_vals, logz_vars = inputs
