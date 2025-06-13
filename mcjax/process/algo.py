@@ -293,7 +293,12 @@ class DDSAlgorithm(BaseAlgorithm):
         self.params = self.model.init(sub, dummy_x, dummy_t)
 
         # optimizer (Adam)
-        self.opt = optax.adam(config.lr)
+        # self.opt = optax.adam(config.lr)
+        # add gradient clipping
+        optax.chain(
+            optax.clip(20.0),
+            optax.adamw(config.lr)
+        )
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
         )
