@@ -589,14 +589,16 @@ class IDEMAlgorithm(BaseAlgorithm):
             ############ ----------------------- test ---------------------- ##############    
             # plot the samples of buffer every 100 outer iterations
             def draw_buffer_samples(key):
-                fig, ax = plt.subplots(figsize=(10, 6))
+                plt.subplots(figsize=(10, 6))
                 key, subkey = jr.split(key)
                 data = buffer.sample(subkey, 1000)[0]  # Sample 1000 points from buffer
-                ax.hist(data, bins=50, density=True, alpha=0.5)
-                ax.set_title(f"Buffer samples at outer {outer_idx}")
-                ax.set_xlabel('x')
-                ax.set_ylabel('Density')
+
+                plt.hist(data, bins=50, density=True, alpha=0.5)
+                plt.title(f"Buffer samples at outer {outer_idx}")
+                plt.xlabel('x')
+                plt.ylabel('Density')
                 plt.savefig(f"{self.cfg.results_dir}/buffer_samples_outer_{outer_idx}.png")
+            
             jax.lax.cond(
                 outer_idx % 100 == 0,
                 draw_buffer_samples,
