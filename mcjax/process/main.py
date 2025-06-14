@@ -119,10 +119,7 @@ def main():
     ########################### -test ###########################
     # plot the buffer
     plt.figure(figsize=(10, 6))
-    with jax.disable_jit():
-        raw = alg.buffer.sample.__wrapped__
-        data, = raw(alg.buffer, jr.PRNGKey(0), 5000)
-    data = jax.device_get(data).flatten()
+    data = alg.buffer.data
     plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
     # Plot target distribution
     x = jnp.linspace(-7, 10, 1000)
