@@ -675,7 +675,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             if outer_idx % 10 == 0:
                 data = buffer.data
                 plt.figure(figsize=(10, 6))
-                plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
+                plt.hist(data, bins='auto', density=True, alpha=0.5, label='Buffer Samples')
                 # Plot target distribution
                 # x = jnp.linspace(-7, 7, 1000)
                 # target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
