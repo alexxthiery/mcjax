@@ -670,6 +670,21 @@ class IDEMAlgorithm(BaseAlgorithm):
                 inner_iters=self.cfg.inner_iters,
             )
             state, key, losses = inner_trainer.run(key)
+
+            # print data in buffer
+            if outer_idx % 10 == 0:
+                data = buffer.data
+                plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
+                # Plot target distribution
+                x = jnp.linspace(-7, 10, 1000)
+                target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
+                target_kde = gaussian_kde(target_samples)
+                plt.plot(x, target_kde(x), 'g--', lw=2, label='Target Dist')
+                plt.title('Replay Buffer Samples')
+                plt.xlabel('x')
+                plt.ylabel('Density')
+                plt.legend()
+                plt.savefig(f"{self.cfg.results_dir}/buffer_samples.png")
         
         final_carry = (key, state, self.buffer, logz_vals, logz_vars)
         all_losses = losses

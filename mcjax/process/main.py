@@ -116,23 +116,6 @@ def main():
         alg.state = alg.state.replace(params=saved_params)
 
 
-    ########################### -test ###########################
-    # plot the buffer
-    plt.figure(figsize=(10, 6))
-    data = alg.buffer.data
-    plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
-    # Plot target distribution
-    x = jnp.linspace(-7, 10, 1000)
-    target_samples = alg.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
-    target_kde = gaussian_kde(target_samples)
-    plt.plot(x, target_kde(x), 'g--', lw=2, label='Target Dist')
-    plt.title('Replay Buffer Samples')
-    plt.xlabel('x')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.savefig(f"{args.results_dir}/buffer_samples.png")
-    ######################################################
-
     # Sampling
     key, sub = jr.split(key)
     samples_seq = alg.sample(alg.state.params, sub, num_samples=10000)
