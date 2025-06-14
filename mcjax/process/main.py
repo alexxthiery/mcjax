@@ -119,8 +119,8 @@ def main():
     ########################### -test ###########################
     # plot the buffer
     plt.figure(figsize=(10, 6))
-    with jax.disable_jit():
-        data, = alg.buffer.sample(jr.PRNGKey(0), 5000)
+    raw_sample = alg.buffer.sample.__wrapped__ # grab the raw Python metho
+    data, = raw_sample(jr.PRNGKey(0), 5000)
     # convert jnp.array to array
     data = jax.device_get(data).flatten()
     plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
