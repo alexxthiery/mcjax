@@ -624,12 +624,23 @@ class IDEMAlgorithm(BaseAlgorithm):
         #     init_carry,
         #     jnp.arange(self.cfg.outer_iters)
         # )
+
+    #################################
+    # Rewrite with for loop
+
+        init_carry = (
+            rng_key,
+            self.state,
+            self.buffer,
+            jnp.zeros((self.cfg.outer_iters,)),
+            jnp.zeros((self.cfg.outer_iters,))
+        )
         for outer_idx in range(self.cfg.outer_iters):
             jax.debug.print("Starting outer loop {}", outer_idx)
-            key, subkey = jr.split(rng_key)
+            key, state, buffer, logz_vals, logz_vars = init_carry
             
             # Sample new x₀'s and update buffer
-            seq = self.sample(self.state.params, subkey, self.cfg.num_samples_per_outer)
+            seq = self.sample(self.state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             self.buffer = self.buffer.add(new_x0s)
             def yes_branch(inputs):
