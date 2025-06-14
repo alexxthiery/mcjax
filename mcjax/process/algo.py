@@ -676,7 +676,7 @@ class IDEMAlgorithm(BaseAlgorithm):
                 data = buffer.data
                 plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
                 # Plot target distribution
-                x = jnp.linspace(-7, 10, 1000)
+                x = jnp.linspace(-7, 7, 1000)
                 target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
                 target_kde = gaussian_kde(target_samples)
                 plt.plot(x, target_kde(x), 'g--', lw=2, label='Target Dist')
