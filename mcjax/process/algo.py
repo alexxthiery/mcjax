@@ -629,27 +629,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         key, state, buffer, logz_vals, logz_vars = final_carry
         self.state = state
         self.buffer = buffer
-
-        ########################### -test ###########################
-        # plot the buffer
-        plt.figure(figsize=(10, 6))
-        data = buffer.sample(jr.PRNGKey(0), 5000)[0]
-        # convert jnp.array to array
-        data = jax.device_get(data).flatten()
-        plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
-        # Plot target distribution
-        x = jnp.linspace(-7, 10, 1000)
-        target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
-        target_kde = gaussian_kde(target_samples)
-        plt.plot(x, target_kde(x), 'g--', lw=2, label='Target Dist')
-        plt.title('Replay Buffer Samples')
-        plt.xlabel('x')
-        plt.ylabel('Density')
-        plt.legend()
-        plt.savefig(f"{self.cfg.results_dir}/buffer_samples.png")
-        ######################################################
-
-        
+     
         # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
         all_losses_flat = all_losses.reshape(-1)
         
