@@ -674,6 +674,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             # print data in buffer
             if outer_idx % 10 == 0:
                 data = buffer.data
+                plt.figure(figsize=(10, 6))
                 plt.hist(data, bins=50, density=True, alpha=0.5, label='Buffer Samples')
                 # Plot target distribution
                 # x = jnp.linspace(-7, 7, 1000)
@@ -683,8 +684,8 @@ class IDEMAlgorithm(BaseAlgorithm):
                 plt.title('Replay Buffer Samples')
                 plt.xlabel('x')
                 plt.ylabel('Density')
-                plt.legend()
-                plt.savefig(f"{self.cfg.results_dir}/buffer_samples.png")
+                plt.savefig(f"{self.cfg.results_dir}/buffer_samples_{outer_idx}.png")
+                plt.close()
         
         final_carry = (key, state, self.buffer, logz_vals, logz_vars)
         all_losses = losses
