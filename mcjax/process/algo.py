@@ -674,6 +674,8 @@ class IDEMAlgorithm(BaseAlgorithm):
             # print data in buffer
             if outer_idx % 10 == 0:
                 data = buffer.data
+                size = buffer.size
+                data = data[:size]  # Only take the filled part of the buffer
                 plt.figure(figsize=(10, 6))
                 plt.hist(data, bins='auto', density=True, alpha=0.5, label='Buffer Samples')
                 print(f"in loop {outer_idx} data.shape is {data.shape}")
