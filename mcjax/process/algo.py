@@ -676,6 +676,7 @@ class IDEMAlgorithm(BaseAlgorithm):
                 print(f"in loop {outer_idx} data is of size {buffer.size}")
                 data = buffer.data
                 size = buffer.size
+                print(size)
                 data = data[:size]  # Only take the filled part of the buffer
                 plt.figure(figsize=(10, 6))
                 plt.hist(data, bins='auto', density=True, alpha=0.5, label='Buffer Samples')
