@@ -544,7 +544,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
-    # @partial(jax.jit, static_argnums=(0))
+    @partial(jax.jit, static_argnums=(0))
     def train(self, rng_key):
         """
         JIT-compatible version using jax.lax.scan for outer loop.
@@ -657,25 +657,6 @@ class IDEMAlgorithm(BaseAlgorithm):
             )
             state, key, losses = inner_trainer.run(key)
 
-            # print data in buffer
-            if outer_idx % 1 == 0:
-                buffer_host = jax.device_get(self.buffer)
-                data = buffer_host.data
-                size = buffer_host.size.astype(int)
-                print(size)
-                data = data[:size]  # Only take the filled part of the buffer
-                plt.figure(figsize=(10, 6))
-                plt.hist(data, bins='auto', density=True, alpha=0.5, label='Buffer Samples')
-                # Plot target distribution
-                # x = jnp.linspace(-7, 7, 1000)
-                # target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
-                # target_kde = gaussian_kde(target_samples)
-                # plt.plot(x, target_kde(x), 'g--', lw=2, label='Target Dist')
-                plt.title('Replay Buffer Samples')
-                plt.xlabel('x')
-                plt.ylabel('Density')
-                plt.savefig(f"{self.cfg.results_dir}/buffer_samples_{outer_idx}.png")
-                plt.close()
         
         final_carry = (key, state, self.buffer, logz_vals, logz_vars)
         all_losses = losses
