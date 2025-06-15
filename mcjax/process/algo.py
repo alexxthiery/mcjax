@@ -661,7 +661,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             # print data in buffer
             if outer_idx % 10 == 0:
                 print(f"in loop {outer_idx} data is of size {self.buffer.size}")
-                data = self.buffer.data
+                data = np.array(self.buffer.data)
                 size = self.buffer.size.astype(int)
                 print(size)
                 data = data[:size]  # Only take the filled part of the buffer
