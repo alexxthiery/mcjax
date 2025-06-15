@@ -660,8 +660,8 @@ class IDEMAlgorithm(BaseAlgorithm):
 
             # print data in buffer
             if outer_idx % 10 == 0:
-                data = jax.device_get(self.buffer.data)
-                size = jax.device_get(self.buffer.size)
+                data = jax.device_get(self.buffer.data[: int(self.buffer.size) ])
+                size = jax.device_get(self.buffer.size).astype(int)
                 print(size)
                 data = data[:size]  # Only take the filled part of the buffer
                 plt.figure(figsize=(10, 6))
