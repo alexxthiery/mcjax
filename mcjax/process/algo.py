@@ -629,6 +629,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             seq = self.sample(self.state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             self.buffer = self.buffer.add(new_x0s)
+            print(new_x0s)
             def yes_branch(inputs):
                 key, logz_vals, logz_vars = inputs
                 key, sub = jr.split(key)
