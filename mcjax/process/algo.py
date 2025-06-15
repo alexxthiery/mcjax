@@ -662,7 +662,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             if outer_idx % 10 == 0:
                 buffer_host = jax.device_get(self.buffer)
                 data = buffer_host.data
-                size = int(buffer_host.size)
+                size = buffer_host.size.astype(int)
                 print(size)
                 data = data[:size]  # Only take the filled part of the buffer
                 plt.figure(figsize=(10, 6))
