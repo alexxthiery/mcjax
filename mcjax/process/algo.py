@@ -544,7 +544,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
-    @partial(jax.jit, static_argnums=(0))
+    # @partial(jax.jit, static_argnums=(0))
     def train(self, rng_key):
         """
         JIT-compatible version using jax.lax.scan for outer loop.
@@ -629,7 +629,6 @@ class IDEMAlgorithm(BaseAlgorithm):
             seq = self.sample(self.state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             self.buffer = self.buffer.add(new_x0s)
-            print(f"Buffer size after adding new samples: {self.buffer.size}")
             def yes_branch(inputs):
                 key, logz_vals, logz_vars = inputs
                 key, sub = jr.split(key)
