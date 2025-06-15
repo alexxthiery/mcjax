@@ -373,45 +373,31 @@ class IDEMAlgorithm(BaseAlgorithm):
 
     @struct.dataclass
     class ReplayBuffer:
-        """
-        A pure, functional replay buffer that can live inside jit/scans.
-        data:     array of shape (max_size, data_dim)
-        idx:      int: next write index
-        size:     int: current occupancy ≤ max_size
-        max_size: Python int, treated as static
-        """
-        data: jnp.ndarray           # shape (max_size, data_dim)
-        idx: jnp.ndarray            # scalar int32
-        size: jnp.ndarray           # scalar int32
-        max_size: int               # static, Python int
+        data:     jnp.ndarray
+        idx:      jnp.ndarray
+        size:     jnp.ndarray
+        max_size: int
 
         @classmethod
         def create(cls, max_size: int, data_dim: int):
             return cls(
                 data=jnp.zeros((max_size, data_dim), dtype=jnp.float32),
-                idx=0,
-                size=0,
+                idx=jnp.array(0, dtype=jnp.int32),
+                size=jnp.array(0, dtype=jnp.int32),
                 max_size=max_size
             )
 
         def add(self, x: jnp.ndarray):
-            """
-            returns a new ReplayBuffer with x stacked in.
-            x has shape (batch_size, data_dim).
-            """
-            batch_size = x.shape[0]
+            batch = x.shape[0]
+            indices = (self.idx + jnp.arange(batch)) % self.max_size
+            new_data = self.data.at[indices].set(x)
+            new_idx  = (indices[-1] + 1) % self.max_size
+            new_size = jnp.minimum(self.size + batch, self.max_size)
+            return type(self)(data=new_data,
+                            idx=new_idx,
+                            size=new_size,
+                            max_size=self.max_size)
 
-            def body(i, carry):
-                data, idx, size = carry
-                data = data.at[idx].set(x[i])
-                idx = (idx + 1) % self.max_size
-                size = jnp.minimum(size + 1, self.max_size)
-                return (data, idx, size)
-
-            data, idx, size = jax.lax.fori_loop(
-                0, batch_size, body, (self.data, self.idx, self.size)
-            )
-            return IDEMAlgorithm.ReplayBuffer(data=data, idx=idx, size=size, max_size=self.max_size)
 
         @partial(jax.jit, static_argnames=('batch_size',))
         def sample(self, key: jr.PRNGKey, batch_size: int):
