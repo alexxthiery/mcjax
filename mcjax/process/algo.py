@@ -676,6 +676,7 @@ class IDEMAlgorithm(BaseAlgorithm):
                 data = buffer.data
                 plt.figure(figsize=(10, 6))
                 plt.hist(data, bins='auto', density=True, alpha=0.5, label='Buffer Samples')
+                print(f"in loop {outer_idx} data.shape is {data.shape}")
                 # Plot target distribution
                 # x = jnp.linspace(-7, 7, 1000)
                 # target_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
