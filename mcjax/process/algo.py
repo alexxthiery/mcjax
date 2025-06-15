@@ -560,7 +560,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         logz_vars = jnp.zeros((self.cfg.outer_iters,))
         all_losses = jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters))
         for outer_idx in range(self.cfg.outer_iters):
-            jax.debug.print("Starting outer loop {}", outer_idx)
+            print(f"Outer iteration {outer_idx + 1}/{self.cfg.outer_iters}")
             
             # Sample new x₀'s and update buffer
             seq = self.sample(state.params, key, self.cfg.num_samples_per_outer)
