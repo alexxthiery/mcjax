@@ -658,7 +658,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             state, key, losses = inner_trainer.run(key)
 
             # print data in buffer
-            if outer_idx % 10 == 0:
+            if outer_idx % 1 == 0:
                 buffer_host = jax.device_get(self.buffer)
                 data = buffer_host.data
                 size = buffer_host.size.astype(int)
