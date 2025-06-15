@@ -553,19 +553,17 @@ class IDEMAlgorithm(BaseAlgorithm):
     #################################
     # Rewrite with for loop
 
-        init_carry = (
-            rng_key,
-            self.state,
-            self.buffer,
-            jnp.zeros((self.cfg.outer_iters,)),
-            jnp.zeros((self.cfg.outer_iters,))
-        )
+        key = rng_key
+        state = self.state
+        buffer = self.buffer
+        logz_vals = jnp.zeros((self.cfg.outer_iters,))
+        logz_vars = jnp.zeros((self.cfg.outer_iters,))
+        all_losses = jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters))
         for outer_idx in range(self.cfg.outer_iters):
             jax.debug.print("Starting outer loop {}", outer_idx)
-            key, state, buffer, logz_vals, logz_vars = init_carry
             
             # Sample new x₀'s and update buffer
-            seq = self.sample(self.state.params, key, self.cfg.num_samples_per_outer)
+            seq = self.sample(state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             self.buffer = self.buffer.add(new_x0s)
             def yes_branch(inputs):
@@ -595,14 +593,12 @@ class IDEMAlgorithm(BaseAlgorithm):
                 inner_iters=self.cfg.inner_iters,
             )
             state, key, losses = inner_trainer.run(key)
+            all_losses = all_losses.at[outer_idx].set(losses)
 
         
-        final_carry = (key, state, self.buffer, logz_vals, logz_vars)
-        all_losses = losses
+
         # Unpack results
-        key, state, buffer, logz_vals, logz_vars = final_carry
         self.state = state
-        self.buffer = buffer
      
         # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
         all_losses_flat = all_losses.reshape(-1)
