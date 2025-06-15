@@ -674,7 +674,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             # print data in buffer
             if outer_idx % 10 == 0:
                 print(f"in loop {outer_idx} data is of size {buffer.size}")
-                data = buffer.data.flatten()
+                data = buffer.data
                 size = buffer.size
                 data = data[:size]  # Only take the filled part of the buffer
                 plt.figure(figsize=(10, 6))
