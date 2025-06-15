@@ -418,10 +418,10 @@ class IDEMAlgorithm(BaseAlgorithm):
             self.target_dist = GMM40()
             self.data_dim = 2
         elif config.target_dist == '1d':
-            mu = jnp.array([[-2.], [0.], [2.]])
-            dist_sigma = jnp.array([0.3, 0.3, 0.3])
+            mu = jnp.array([[-2.]])
+            dist_sigma = jnp.array([0.3])
             log_var = jnp.log(dist_sigma**2)
-            weights = jnp.array([0.3, 0.4, 0.3])
+            weights = jnp.array([1.0])
             self.target_dist = MixedIsotropicGauss(
                 mu=mu, log_var=log_var, weights=weights
             )
@@ -550,67 +550,6 @@ class IDEMAlgorithm(BaseAlgorithm):
         JIT-compatible version using jax.lax.scan for outer loop.
         Returns (final_params, key, all_losses, logz_vals, logz_vars)
         """
-        # Initialize carry for scan: 
-        # (rng_key, train_state, buffer, logz_vals, logz_vars)
-        # init_carry = (
-        #     rng_key,
-        #     self.state,
-        #     self.buffer,
-        #     jnp.zeros((self.cfg.outer_iters,)),
-        #     jnp.zeros((self.cfg.outer_iters,))
-        # )
-        
-        # def outer_step(carry, outer_idx):
-        #     jax.debug.print("Starting outer loop {} ", outer_idx)
-        #     key, state, buffer, logz_vals, logz_vars = carry
-            
-        #     # Sample new x₀'s and update buffer
-        #     key, subkey = jax.random.split(key)
-        #     seq = self.sample(state.params, subkey, self.cfg.num_samples_per_outer)
-        #     new_x0s = seq[-1]
-        #     # test: print new_x0s
-        #     # jax.debug.print("New x0s: {}", new_x0s)
-        #     buffer = buffer.add(new_x0s)  
-            
-        #     def yes_branch(inputs):
-        #         key, logz_vals, logz_vars = inputs
-        #         key, sub = jr.split(key)
-        #         logz = self.estimate_logZ(state.params, sub, self.cfg.num_samples_per_outer)
-        #         logz_vals = logz_vals.at[outer_idx].set(jnp.mean(logz))
-        #         logz_vars = logz_vars.at[outer_idx].set(jnp.var(logz))
-        #         return key, logz_vals, logz_vars
-
-        #     def no_branch(inputs):
-        #         return inputs
-
-        #     key, logz_vals, logz_vars = jax.lax.cond(
-        #         self.cfg.if_logZ,
-        #         yes_branch,
-        #         no_branch,
-        #         operand=(key, logz_vals, logz_vars)
-        #     )
-
-            
-        #     # Run inner training
-        #     inner_trainer = InnerTrainer(
-        #         loss_obj=self.loss_obj,
-        #         state=state,
-        #         batch_size=self.cfg.batch_size,
-        #         inner_iters=self.cfg.inner_iters,
-        #     )
-        #     state, key, losses = inner_trainer.run(key)
-            
-        #     new_carry = (key, state, buffer, logz_vals, logz_vars)
-        #     output = losses  # Shape: (inner_iters,)
-        #     return new_carry, output
-
-        # # Execute scan over outer iterations
-        # final_carry, all_losses = jax.lax.scan(
-        #     outer_step,
-        #     init_carry,
-        #     jnp.arange(self.cfg.outer_iters)
-        # )
-
     #################################
     # Rewrite with for loop
 
