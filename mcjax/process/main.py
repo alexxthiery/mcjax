@@ -95,7 +95,7 @@ def main():
             print("Plotting buffer data histograms...")
             for i in range(0, len(buffer_data), 10):
                 plt.figure()
-                plt.hist(buffer_data[i][:(buffer_size[i])], bins=50, density=True, alpha=0.5)
+                plt.hist(buffer_data[i,:(buffer_size[i]),0], bins=50, density=True, alpha=0.5)
                 plt.title(f"Buffer data at step {i}")
                 plt.xlabel("x")
                 plt.ylabel("Density")
