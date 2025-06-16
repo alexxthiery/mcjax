@@ -544,63 +544,58 @@ class IDEMAlgorithm(BaseAlgorithm):
         return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
-    @partial(jax.jit, static_argnums=(0))
+    @partial(jax.jit, static_argnums=(0,))
     def train(self, rng_key):
-        """
-        JIT-compatible version using jax.lax.scan for outer loop.
-        Returns (final_params, key, all_losses, logz_vals, logz_vars)
-        """
-    #################################
-    # Rewrite with for loop
+        inner_trainer = InnerTrainer(
+        loss_obj=self.loss_obj,
+        state=self.state,
+        batch_size=self.cfg.batch_size,
+        inner_iters=self.cfg.inner_iters,
+        )
 
-        key = rng_key
-        state = self.state
-        buffer = self.buffer
-        logz_vals = jnp.zeros((self.cfg.outer_iters,))
-        logz_vars = jnp.zeros((self.cfg.outer_iters,))
-        all_losses = jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters))
-        for outer_idx in range(self.cfg.outer_iters):
-            jax.debug.print("Outer iteration {i}/{n}", i=outer_idx+1, n=self.cfg.outer_iters)
-            
-            # Sample new x₀'s and update buffer
+        init_carry = (
+            rng_key,
+            self.state,
+            self.buffer,
+            jnp.zeros((self.cfg.outer_iters,)),
+            jnp.zeros((self.cfg.outer_iters,)),
+            jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters)),
+        )
+
+        def scan_body(carry, idx):
+            key, state, buffer, logz_vals, logz_vars, all_losses = carry
+
+            # sample & buffer update
             seq = self.sample(state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
-            self.buffer = self.buffer.add(new_x0s)
-            def yes_branch(inputs):
-                key, logz_vals, logz_vars = inputs
+            buffer = buffer.add(new_x0s)
+
+            # logZ
+            def yes(c):
+                key, lz, lv = c
                 key, sub = jr.split(key)
                 logz = self.estimate_logZ(state.params, sub, self.cfg.num_samples_per_outer)
-                logz_vals = logz_vals.at[outer_idx].set(jnp.mean(logz))
-                logz_vars = logz_vars.at[outer_idx].set(jnp.var(logz))
-                return key, logz_vals, logz_vars
-
-            def no_branch(inputs):
-                return inputs
-
+                lz = lz.at[idx].set(jnp.mean(logz))
+                lv = lv.at[idx].set(jnp.var(logz))
+                return key, lz, lv
             key, logz_vals, logz_vars = jax.lax.cond(
-                self.cfg.if_logZ,
-                yes_branch,
-                no_branch,
-                operand=(key, logz_vals, logz_vars)
+                self.cfg.if_logZ, yes, lambda c: c, (key, logz_vals, logz_vars)
             )
 
-            
-            # Run inner training
-            inner_trainer = InnerTrainer(
-                loss_obj=self.loss_obj,
-                state=state,
-                batch_size=self.cfg.batch_size,
-                inner_iters=self.cfg.inner_iters,
-            )
+            # inner training step
             state, key, losses = inner_trainer.run(key)
-            all_losses = all_losses.at[outer_idx].set(losses)
+            all_losses = all_losses.at[idx].set(losses)
 
+            return (key, state, buffer, logz_vals, logz_vars, all_losses), None
 
-        # Unpack results
+        # run the scan over indices 0..outer_iters-1
+        (key, state, buffer, logz_vals, logz_vars, all_losses), _ = \
+                    jax.lax.scan(scan_body, init_carry, jnp.arange(self.cfg.outer_iters))
+
+        # write back buffer and state
+        self.buffer = buffer
         self.state = state
-     
-        # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
-        all_losses_flat = all_losses.reshape(-1)
-        
+
+        flat_losses = all_losses.reshape(-1)
         jax.debug.print("Training complete.")
-        return state, key, all_losses_flat, logz_vals, logz_vars
+        return state, key, flat_losses, logz_vals, logz_vars
