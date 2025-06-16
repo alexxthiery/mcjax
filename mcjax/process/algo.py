@@ -419,7 +419,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             self.data_dim = 2
         elif config.target_dist == '1d':
             mu = jnp.array([[-2.],[2.]])
-            dist_sigma = jnp.array([0.5],[0.5])
+            dist_sigma = jnp.array([0.5,0.5])
             log_var = jnp.log(dist_sigma**2)
             weights = jnp.array([0.3,0.7])
             self.target_dist = MixedIsotropicGauss(
