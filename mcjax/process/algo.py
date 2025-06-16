@@ -557,18 +557,23 @@ class IDEMAlgorithm(BaseAlgorithm):
             rng_key,
             self.state,
             self.buffer,
-            jnp.zeros((self.cfg.outer_iters,)),
-            jnp.zeros((self.cfg.outer_iters,)),
-            jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters)),
+            jnp.zeros((self.cfg.outer_iters,)), # logZ values
+            jnp.zeros((self.cfg.outer_iters,)), # logZ variances
+            jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters)), # all losses (outer_iters x inner_iters)
+            jnp.zeros((self.cfg.outer_iters, self.buffer.max_size, self.data_dim)), # buffer data (outer_iters x data_dim
+            jnp.zeros((self.cfg.outer_iters,)) # buffer size
         )
 
         def scan_body(carry, idx):
-            key, state, buffer, logz_vals, logz_vars, all_losses = carry
+            key, state, buffer, logz_vals, logz_vars, all_losses, buffer_data, buffer_size = carry
 
             # sample & buffer update
             seq = self.sample(state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             buffer = buffer.add(new_x0s)
+            # store the buffer data
+            buffer_data = buffer_data.at[idx].set(buffer.data)
+            buffer_size = buffer_size.at[idx].set(buffer.size)
 
             # logZ
             def yes(c):
@@ -586,10 +591,10 @@ class IDEMAlgorithm(BaseAlgorithm):
             state, key, losses = inner_trainer.run(key)
             all_losses = all_losses.at[idx].set(losses)
 
-            return (key, state, buffer, logz_vals, logz_vars, all_losses), None
+            return (key, state, buffer, logz_vals, logz_vars, all_losses,buffer_data, buffer_size), None
 
         # run the scan over indices 0..outer_iters-1
-        (key, state, buffer, logz_vals, logz_vars, all_losses), _ = \
+        (key, state, buffer, logz_vals, logz_vars, all_losses,buffer_data, buffer_size), _ = \
                     jax.lax.scan(scan_body, init_carry, jnp.arange(self.cfg.outer_iters))
 
         # write back buffer and state
@@ -598,4 +603,4 @@ class IDEMAlgorithm(BaseAlgorithm):
 
         flat_losses = all_losses.reshape(-1)
         jax.debug.print("Training complete.")
-        return state, key, flat_losses, logz_vals, logz_vars
+        return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size

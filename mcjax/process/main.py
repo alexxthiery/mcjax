@@ -70,7 +70,7 @@ def main():
         print(f"Start training with {args.algo}")
         key, sub = jr.split(key)
         t1 = time.time()
-        final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
+        final_state, final_key, losses, logz_vals, logz_vars,buffer_data, buffer_size = alg.train(sub)
         t2 = time.time()
         print(f"Tracing+Training finished in {t2 - t1:.2f} seconds.")
         alg.state = final_state  # Update the state with final trained parameters
@@ -88,8 +88,24 @@ def main():
         plt.savefig(f"{args.results_dir}/{args.algo}_loss.png")
         plt.close()
 
+        if args.algo == "idem" and args.target_dist == "1d":
+            # plot buffer data (hist) every 10 steps
+            print("Plotting buffer data histograms...")
+            for i in range(0, len(buffer_data), 10):
+                plt.figure()
+                plt.hist(buffer_data[i][:buffer_size[i]], bins=50, density=True, alpha=0.5)
+                plt.title(f"Buffer data at step {i}")
+                plt.xlabel("x")
+                plt.ylabel("Density")
+                plt.savefig(f"{args.results_dir}/{args.algo}_buffer_step_{i}.png")
+                plt.close()
+               
+
+        
+
         # Plot logZ (if computed)
         if args.if_logZ:
+            print("Plotting logZ statistics...")
             fig, ax1 = plt.subplots()
             x = 10 + jax.numpy.arange(args.num_steps // 10)*10 if args.algo == "dds" else args.inner_iters + jax.numpy.arange(args.outer_iters) * args.inner_iters
             ax1.plot(x, logz_vars[:len(x)], color='C0', label="logZ var")
@@ -108,9 +124,12 @@ def main():
             plt.title(f"{args.algo} logZ statistics")
             plt.savefig(f"{args.results_dir}/{args.algo}_logZ.png")
             plt.close()
+        
+        
 
     else:
         # Load saved params and wrap into a dummy TrainState
+        print(f"Loading model parameters from {args.model_path}")
         with open(args.model_path, "rb") as f:
             saved_params = pickle.load(f)
         alg.state = alg.state.replace(params=saved_params)
