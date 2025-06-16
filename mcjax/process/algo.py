@@ -512,8 +512,8 @@ class IDEMAlgorithm(BaseAlgorithm):
         target = self.target_dist
 
         def score_fn(params, k, y):
-            t_continuous = k * (self.ou.K - 1)  # Scale to [0, K-1]
-            batch_t = jnp.full((y.shape[0],), t_continuous, dtype=jnp.float32)
+            batch_t = k * self.ou.K  # Scale to [0, K]
+            # batch_t = jnp.full((y.shape[0],), t_continuous, dtype=jnp.float32)
             nn1, nn2 = self.model.apply(params, y, batch_t)
 
             if condition == 'none':
