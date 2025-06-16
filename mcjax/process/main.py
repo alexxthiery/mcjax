@@ -88,12 +88,14 @@ def main():
         plt.savefig(f"{args.results_dir}/{args.algo}_loss.png")
         plt.close()
 
+        print(buffer_data.shape)
+        print(buffer_size.shape)
         if args.algo == "idem" and args.target_dist == "1d":
             # plot buffer data (hist) every 10 steps
             print("Plotting buffer data histograms...")
             for i in range(0, len(buffer_data), 10):
                 plt.figure()
-                plt.hist(buffer_data[i][:buffer_size[i]], bins=50, density=True, alpha=0.5)
+                plt.hist(buffer_data[i][:(buffer_size[i])], bins=50, density=True, alpha=0.5)
                 plt.title(f"Buffer data at step {i}")
                 plt.xlabel("x")
                 plt.ylabel("Density")
