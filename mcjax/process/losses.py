@@ -108,26 +108,25 @@ class IDEMLoss(BaseLoss):
         # Draw a batch of x0 ∼ buffer
         x0,key = self.buffer.sample(key, batch_size)    # shape: (B, d, ...)
 
-        # Sample t ∼ Uniform(0,1) for each x0 in the batch
+        # Sample t ∼ Uniform(0,1) for all the x0 in the batch
         key,sub = jr.split(key)
-        t = jr.uniform(sub, shape=(batch_size,), minval=0.0, maxval=1.0)  # → (B,)
+        t = jr.uniform(sub, minval=0.0, maxval=1.0)  
 
         # Form x_t = x0 + sigma_t * eps, where σ_t = sigma_fn(t)
-        sigma_t = self.sigma_fn(t)  # → (B,)
-        # reshape so that σ_t can broadcast over (d, …) dimensions of x0
-        sigma_t = sigma_t.reshape((batch_size,) + (1,) * (x0.ndim - 1))
+        sigma_t = self.sigma_fn(t) 
+
+        # Get the batch of xt
         key, sub = jr.split(key)
         eps = jr.normal(sub, shape=x0.shape)
-        x_t = x0 + sigma_t * eps    # → (B, d, …)
+        x_t = x0 + sigma_t * eps
 
-        # Define a function that, for one (x_t_single, t_single),
-        #    draws K samples x0_i ∼ N(x_t_single, σ_t^2), computes log p and grad log p,
-        #    and returns the weighted average of gradients
-        def mc_estimate_single(x_t_single, t_single, key_single):
-            sigma = self.sigma_fn(t_single)    
+
+        def mc_estimate_single(x_t_single, t, key_single):
+            # compute Sk for one single sampled x0
+            sigma = self.sigma_fn(t)    
 
             # draw K independent x0_i ∼ N(x_t_single, σ² I)
-            keys_MC = jr.split(key_single, self.K)
+            keys_MC = jr.split(key_single, 10_000) # 10_000 is arbitrary, can be larger or smaller
             x0_MC = jnp.stack([
                 x_t_single + sigma * jr.normal(k, shape=x_t_single.shape)
                 for k in keys_MC
@@ -149,18 +148,15 @@ class IDEMLoss(BaseLoss):
 
         keys_batch = jr.split(key, batch_size)  # → (B,) of PRNGKey
 
-        # Vectorize mc_estimate_single over the batch dimension
-        S_K_batch = jax.vmap(mc_estimate_single)(
-            x_t,       # shape: (B, d, …)
-            t,         # shape: (B,)
-            keys_batch # shape: (B,)
-        )  # → (B, d, …)
+        # Vectorize mc_estimate_single over x_t and keys_batch:
+        S_K_batch = jax.vmap(mc_estimate_single, in_axes=(0, None, 0), out_axes=0)(
+            x_t, t, keys_batch)
 
-        s_pred = self.score_fn(params, t, x_t)  # → (B, d, …)
+        s_pred = self.score_fn(params, t, x_t) 
 
         # Compute per-example squared ‖S_K - s_pred‖² and average:
         sq_err = jnp.sum((S_K_batch - s_pred) ** 2,
-                        axis=tuple(range(1, S_K_batch.ndim)))  # → (B,)
+                        axis=tuple(range(1, S_K_batch.ndim)))  
         loss = jnp.mean(sq_err)  # scalar
 
         return loss
