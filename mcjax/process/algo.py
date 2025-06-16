@@ -560,7 +560,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         logz_vars = jnp.zeros((self.cfg.outer_iters,))
         all_losses = jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters))
         for outer_idx in range(self.cfg.outer_iters):
-            print(f"Outer iteration {outer_idx + 1}/{self.cfg.outer_iters}")
+            jax.debug.print("Outer iteration {i}/{n}", i=outer_idx+1, n=self.cfg.outer_iters)
             
             # Sample new x₀'s and update buffer
             seq = self.sample(state.params, key, self.cfg.num_samples_per_outer)
@@ -595,15 +595,12 @@ class IDEMAlgorithm(BaseAlgorithm):
             state, key, losses = inner_trainer.run(key)
             all_losses = all_losses.at[outer_idx].set(losses)
 
-        
 
         # Unpack results
         self.state = state
-
-        print("Final losses")
      
         # Flatten losses: (outer_iters, inner_iters) -> (outer_iters*inner_iters,)
         all_losses_flat = all_losses.reshape(-1)
         
-        print("Training complete.")
+        jax.debug.print("Training complete.")
         return state, key, all_losses_flat, logz_vals, logz_vars

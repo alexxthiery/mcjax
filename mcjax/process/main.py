@@ -72,7 +72,7 @@ def main():
         t1 = time.time()
         final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
         t2 = time.time()
-        print(f"Training finished in {t2 - t1:.2f} seconds.")
+        print(f"Tracing+Training finished in {t2 - t1:.2f} seconds.")
         alg.state = final_state  # Update the state with final trained parameters
         # Save parameters
         with open(args.model_path, "wb") as f:
