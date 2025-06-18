@@ -296,7 +296,7 @@ class DDSAlgorithm(BaseAlgorithm):
     """
 
     def __init__(self, config):
-
+        super().__init__()
         # build the network
         #    choose MLP or ResBlock based on config.model_type
         if config.network_name == 'mlp':
@@ -432,7 +432,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             return self.data[idxs], key
 
     def __init__(self, config):
-         
+        super().__init__() 
         # Build the neural network (MLP or ResBlock)  
         if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=config.K)
