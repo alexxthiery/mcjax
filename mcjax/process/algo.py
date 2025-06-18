@@ -14,6 +14,7 @@ from flax import struct
 
 from models import MLPModel, ResBlockModel
 from ou import OU
+from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
 from losses import DDSLoss, IDEMLoss
 from trainer import Trainer, InnerTrainer
@@ -36,7 +37,6 @@ class BaseAlgorithm(ABC):
       - self.cfg         : the config namespace/dict
       - self.data_dim    : 1 or 2 (used in visualize_samples)
     """
-    @abstractmethod
     def __init__(self, config):
         """
         config: argparse.Namespace (or dict) containing all needed hyperparameters.
@@ -44,7 +44,45 @@ class BaseAlgorithm(ABC):
           self.cfg, self.ou, self.init_dist, self.target_dist,
           self.score_fn, self.params, self.state, self.data_dim
         """
-        pass
+        self.cfg = config
+
+        # Build the target distribution
+        if config.target_dist == 'gmm40':
+            self.target_dist = GMM40()
+            self.data_dim = 2
+        elif config.target_dist == '1d':
+            mu = jnp.array([[-2.],[2.]])
+            dist_sigma = jnp.array([0.5,0.5])
+            log_var = jnp.log(dist_sigma**2)
+            weights = jnp.array([0.3,0.7])
+            self.target_dist = MixedIsotropicGauss(
+                mu=mu, log_var=log_var, weights=weights
+            )
+            self.data_dim = 1
+        elif config.target_dist == 'funnel':
+            self.target_dist = NealFunnel(sigma_x=3.0, dim=2)
+            self.data_dim = 2
+
+        else:
+            raise ValueError(f"Unknown target_dist: {config.target_dist}")
+
+        # Build the reference initial distribution
+        self.init_dist = IsotropicGauss(
+            mu=jnp.zeros(self.data_dim), log_var=0.0
+        )
+        
+        # create timesteps / beta / alpha schedule
+        K = config.K
+        ts = jnp.arange(K, dtype=jnp.float32)
+        if config.variable_ts:
+            beta_start, beta_end = 0.1, 20.0
+            beta = beta_start + (beta_end - beta_start) * (ts / (K - 1))
+        else:
+            beta = jnp.ones(K) * 0.5
+        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
+
+        # make the OU process
+        self.ou = OU(alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
 
     @abstractmethod
     def make_score_fn(self):
@@ -200,21 +238,35 @@ class BaseAlgorithm(ABC):
 
         elif self.data_dim == 2:
             fig, ax = plt.subplots(figsize=(10, 10))
-            x = jnp.linspace(-45, 45, 200)
-            y = jnp.linspace(-45, 45, 200)
-            X, Y = jnp.meshgrid(x, y)
-            pts = jnp.stack([X.ravel(), Y.ravel()], axis=1)
 
-            Ztarg = self.target_dist.batch(pts).reshape(X.shape)
+            key = jr.PRNGKey(42)
+            pts = self.target_dist.sample(key, 100_000)      # shape (100k, 2)
+            pts = jax.device_get(pts)                       # now a NumPy array
+
+            # compute percentiles
+            lower = np.percentile(pts, 0.5, axis=0)         # shape (2,)
+            upper = np.percentile(pts, 99.5, axis=0)        # shape (2,)
+
+            # add a 5% margin
+            margin = 0.05 * (upper - lower)
+            xmin, xmax = lower[0] - margin[0], upper[0] + margin[0]
+            ymin, ymax = lower[1] - margin[1], upper[1] + margin[1]
+
+            # build grid & plot exactly as before
+            x = np.linspace(xmin, xmax, 200)
+            y = np.linspace(ymin, ymax, 200)
+            X, Y = np.meshgrid(x, y)
+            grid = np.stack([X.ravel(), Y.ravel()], axis=1)
+            grid = jnp.array(grid)
+
+            Ztarg = self.target_dist.batch(grid).reshape(X.shape)
             contour = ax.contourf(X, Y, jnp.exp(Ztarg), levels=10)
             fig.colorbar(contour, ax=ax)
 
             scatter = ax.scatter([], [], c='red', s=10, alpha=0.6, label='Samples')
             time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
-            ax.set_xlim(-45, 45)
-            ax.set_ylim(-45, 45)
-            ax.set_xlabel('x₁')
-            ax.set_ylabel('x₂')
+            ax.set_xlabel('x1')
+            ax.set_ylabel('x2')
             ax.set_title('2D Sample Movement')
 
             def animate(frame):
@@ -244,44 +296,13 @@ class DDSAlgorithm(BaseAlgorithm):
     """
 
     def __init__(self, config):
-        # config is an argparse.Namespace in the main script
-        self.cfg = config
-
-        # build the target distribution
-        if config.target_dist == 'gmm40':
-            self.target_dist = GMM40()
-            self.data_dim = 2
-        elif config.target_dist == '1d':
-            mu = jnp.array([[-2.],[0.],[2.]])
-            dist_sigma = jnp.array([0.3, 0.3, 0.3])
-            log_var = jnp.log(dist_sigma**2)
-            weights = jnp.array([0.3, 0.4, 0.3])
-            self.target_dist = MixedIsotropicGauss(mu=mu, log_var=log_var, weights=weights)
-            self.data_dim = 1
-
-
-        # build the reference init distribution
-        self.init_dist   = IsotropicGauss(mu=jnp.zeros(self.data_dim), log_var=0.0)
-
-        # create timesteps / beta / alpha schedule
-        K = config.K
-        ts = jnp.arange(K, dtype=jnp.float32)
-        if config.variable_ts:
-            beta_start, beta_end = 0.1, 20.0
-            beta = beta_start + (beta_end - beta_start) * (ts / (K - 1))
-        else:
-            beta = jnp.ones(K) * 0.5
-        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
-
-        # make the OU process
-        self.ou = OU(alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
 
         # build the network
         #    choose MLP or ResBlock based on config.model_type
         if config.network_name == 'mlp':
-            self.model = MLPModel(dim=self.data_dim, T=K)
+            self.model = MLPModel(dim=self.data_dim, T=config.K)
         elif config.network_name == 'resblock':
-            self.model = ResBlockModel(dim=self.data_dim, T=K)
+            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
         else:
             raise ValueError(f"Unknown model_type: {config.network_name}")
 
@@ -411,49 +432,12 @@ class IDEMAlgorithm(BaseAlgorithm):
             return self.data[idxs], key
 
     def __init__(self, config):
-        self.cfg = config
-
-        # Build the target distribution
-        if config.target_dist == 'gmm40':
-            self.target_dist = GMM40()
-            self.data_dim = 2
-        elif config.target_dist == '1d':
-            mu = jnp.array([[-2.],[2.]])
-            dist_sigma = jnp.array([0.5,0.5])
-            log_var = jnp.log(dist_sigma**2)
-            weights = jnp.array([0.3,0.7])
-            self.target_dist = MixedIsotropicGauss(
-                mu=mu, log_var=log_var, weights=weights
-            )
-            self.data_dim = 1
-        else:
-            raise ValueError(f"Unknown target_dist: {config.target_dist}")
-
-        # Build the reference initial distribution
-        self.init_dist = IsotropicGauss(
-            mu=jnp.zeros(self.data_dim), log_var=0.0
-        )
-
-
-        # Create discrete timesteps / beta / alpha schedule for OU
-        K = config.K
-        ts = jnp.arange(K, dtype=jnp.float32)
-        if config.variable_ts:
-            beta_start, beta_end = 0.1, 20.0
-            beta = beta_start + (beta_end - beta_start) * (ts / (K - 1))
-        else:
-            beta = jnp.ones(K, dtype=jnp.float32) * 0.5
-        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
-
-        # Instantiate the OU forward/reverse process
-        self.ou = OU(alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
-
          
         # Build the neural network (MLP or ResBlock)  
         if config.network_name == 'mlp':
-            self.model = MLPModel(dim=self.data_dim, T=K)
+            self.model = MLPModel(dim=self.data_dim, T=config.K)
         elif config.network_name == 'resblock':
-            self.model = ResBlockModel(dim=self.data_dim, T=K)
+            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
         else:
             raise ValueError(f"Unknown network_name: {config.network_name}")
 
