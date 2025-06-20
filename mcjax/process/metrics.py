@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 from scipy.stats import wasserstein_distance
 from sklearn.metrics import pairwise_distances
+from scipy.optimize import linear_sum_assignment
 import numpy as np
 from scipy.special import logsumexp 
 
@@ -29,11 +30,35 @@ def MMD_squared(x_samples: np.ndarray, y_samples: np.ndarray, kernel='rbf', sigm
         - 2 * np.sum(Kxy) / (m * n)
     return mmd
 
-def two_wasserstein(x_samples: np.ndarray, y_samples: np.ndarray):
-    if x_samples.ndim == 1 or x_samples.shape[1] == 1:
-        return wasserstein_distance(x_samples.flatten(), y_samples.flatten())
-    else:
-        raise NotImplementedError("Multidimensional Wasserstein not implemented")
+def two_wasserstein(x_samples: np.ndarray, y_samples: np.ndarray) -> float:
+    """
+    Compute the 2-Wasserstein distance between two empirical distributions.
+    """
+    x = np.asarray(x_samples)
+    y = np.asarray(y_samples)
+
+    # 1D fallback
+    if x.ndim == 1 or (x.ndim == 2 and x.shape[1] == 1):
+        return wasserstein_distance(x.flatten(), y.flatten())
+
+    if x.shape[0] != y.shape[0]:
+        raise ValueError(f"Need same number of samples, got {x.shape[0]} vs {y.shape[0]}")
+    n = x.shape[0]
+
+    # Flatten any trailing feature dims into a single vector of length D
+    xf = x.reshape(n, -1)
+    yf = y.reshape(n, -1)
+
+    # Build the cost matrix: squared Euclidean distances
+    diff = xf[:, None, :] - yf[None, :, :]   # shape (n, n, \Pi_d)
+    C    = np.sum(diff * diff, axis=2)       # shape (n, n)
+
+    # Solve assignment problem
+    row_ind, col_ind = linear_sum_assignment(C)
+
+    # Compute sqrt of average squared cost
+    avg_sq_cost = C[row_ind, col_ind].sum() / n
+    return float(np.sqrt(avg_sq_cost))
 
 def ELBO(logweights: np.ndarray, logZ: float = 0.0):
     """

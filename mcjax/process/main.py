@@ -14,7 +14,7 @@ import time
 from scipy.stats import gaussian_kde
 
 from algo import DDSAlgorithm,IDEMAlgorithm
-from metrics import MMD_squared
+from metrics import MMD_squared,two_wasserstein
 
 
 def parse_args():
@@ -88,8 +88,6 @@ def main():
         plt.savefig(f"{args.results_dir}/{args.algo}_loss.png")
         plt.close()
 
-        print(buffer_data.shape)
-        print(buffer_size.shape)
         if args.algo == "idem" and args.target_dist == "1d":
             # plot buffer data (hist) every 10 steps
             print("Plotting buffer data histograms...")
@@ -102,8 +100,6 @@ def main():
                 plt.savefig(f"{args.results_dir}/{args.algo}_buffer_step_{i}.png")
                 plt.close()
                
-
-        
 
         # Plot logZ (if computed)
         if args.if_logZ:
@@ -146,12 +142,11 @@ def main():
     final_samples = samples_seq[-1]
     # Compute MMD between final_samples and target samples
     tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), 10000)
-    mmd_val = MMD_squared(np.array(final_samples), np.array(tgt_samps), sigma=1.0)
-    print(f"Final MMD to target: {mmd_val:.4e}")
+    result = two_wasserstein(np.array(final_samples), np.array(tgt_samps))
+    print(f"Wasserstein distance: {result:.4e}")
 
     # Visualization 
     alg.visualize_samples(samples_seq)
-
 
 
 
