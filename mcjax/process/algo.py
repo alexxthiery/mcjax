@@ -654,7 +654,7 @@ class PISAlgorithm(BaseAlgorithm):
         return jax.jit(score_fn)
 
     def make_loss(self):
-        return PISLoss(T = self.cfg.T, num_steps= self.cfg.num_steps)
+        return PISLoss(num_steps= self.cfg.num_steps)
 
     def train(self, rng_key):
         """
