@@ -163,9 +163,9 @@ class IDEMLoss(BaseLoss):
 
 
 class PISLoss(BaseLoss):
-    def __init__(self, T: float, delta_t: float):
-        self.n_steps = int(T / delta_t)
-        self.delta_t = delta_t
+    def __init__(self, T: float, num_steps: int):
+        self.n_steps = num_steps
+        self.delta_t = T / num_steps
 
     @partial(jax.jit, static_argnums=(0, 3))
     def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
