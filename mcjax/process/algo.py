@@ -615,7 +615,7 @@ class PISAlgorithm(BaseAlgorithm):
 
         # Control function and loss
         self.control_fn = self.make_score_fn()
-        self.loss_obj    = PISLoss(T=config.T, delta_t=config.delta_t)
+        self.loss_obj    = self.make_loss()
 
     
     def make_score_fn(self):
@@ -653,6 +653,8 @@ class PISAlgorithm(BaseAlgorithm):
 
         return jax.jit(score_fn)
 
+    def make_loss(self):
+        return PISLoss(add_score=self.cfg.add_score)
 
     def train(self, rng_key):
         """
