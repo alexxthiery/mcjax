@@ -666,7 +666,7 @@ class PISAlgorithm(BaseAlgorithm):
             process      = None,                # OU process not used in PIS forward pass
             init_dist    = self.init_dist,
             target_dist  = self.target_dist,
-            score_fn     = self.control_fn,     
+            score_fn     = self.score_fn,     
             loss_obj     = self.loss_obj,
             state        = self.state,
             batch_size   = self.cfg.batch_size,
