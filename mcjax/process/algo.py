@@ -614,7 +614,7 @@ class PISAlgorithm(BaseAlgorithm):
         )
 
         # Control function and loss
-        self.control_fn = self.make_score_fn()
+        self.score_fn = self.make_score_fn()
         self.loss_obj    = self.make_loss()
 
     
