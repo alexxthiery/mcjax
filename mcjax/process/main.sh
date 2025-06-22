@@ -3,8 +3,8 @@
 # ----------- Parameter settings -----------
 ############################################
 
-algo='idem' 
-target_dist='gmm40' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model； 'funnel': 2-d Funnel distribution
+algo='pis' 
+target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model； 'funnel': 2-d Funnel distribution
 network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
 condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
 add_score=true # Add score term to the loss function

@@ -16,7 +16,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
-from losses import DDSLoss, IDEMLoss
+from losses import DDSLoss, IDEMLoss, PISLoss
 from trainer import Trainer, InnerTrainer
 
 class BaseAlgorithm(ABC):
@@ -588,3 +588,87 @@ class IDEMAlgorithm(BaseAlgorithm):
         flat_losses = all_losses.reshape(-1)
         jax.debug.print("Training complete.")
         return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size
+
+
+class PISAlgorithm(BaseAlgorithm):
+    def __init__(self, config):
+        super().__init__(config)
+        if config.network_name == 'mlp':
+            self.model = MLPModel(dim=self.data_dim, T=config.K)
+        elif config.network_name == 'resblock':
+            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
+        else:
+            raise ValueError(f"Unknown model_type: {config.network_name}")
+
+        # Initialize params & optimizer state
+        key = jr.PRNGKey(config.seed)
+        key, sub = jr.split(key)
+        dummy_x = jnp.zeros((config.batch_size, self.data_dim))
+        dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
+        self.params = self.model.init(sub, dummy_x, dummy_t)
+
+        self.opt = optax.adamw(config.lr)
+        
+        self.state = train_state.TrainState.create(
+            apply_fn=self.model.apply, params=self.params, tx=self.opt
+        )
+
+        # Control function and loss
+        self.control_fn = self.make_score_fn()
+        self.loss_obj    = PISLoss(T=config.T, delta_t=config.delta_t)
+
+    
+    def make_score_fn(self):
+        """
+        Returns: score_fn(params, k, y) -> shape (batch, data_dim)
+        Implements:
+          nn1, nn2 = model.apply(params, y, t=k)
+          log_mu = target_dist.batch(y)
+          grad_log_mu = target_dist.grad_batch(y)
+          according to condition_term: 'none'/'score'/'grad_score'
+        """
+        condition = self.cfg.condition_term
+        target = self.target_dist
+
+        def score_fn(params, k, y):
+            # k: int index in [0, K-1], y: shape (batch, data_dim)
+            batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
+            nn1, nn2 = self.model.apply(params, y, batch_k)
+
+            if condition == 'none':
+                return nn1
+
+            elif condition == 'score':
+                logp = target.batch(y)  # shape (batch,)
+                normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
+                return nn1 + nn2 * normed[:, None]  
+
+            elif condition == 'grad_score':
+                gradp = target.grad_batch(y)  # shape (batch, dim)
+                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                return nn1 + nn2 * normed
+
+            else:
+                raise ValueError(f"Unknown condition_term: {condition}")
+
+        return jax.jit(score_fn)
+
+
+    def train(self, rng_key):
+        """
+        Runs the outer training loop using the generic Trainer.
+        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
+        """
+        trainer = Trainer(
+            algorithm    = self,
+            process      = None,                # OU process not used in PIS forward pass
+            init_dist    = self.init_dist,
+            target_dist  = self.target_dist,
+            score_fn     = self.control_fn,     
+            loss_obj     = self.loss_obj,
+            state        = self.state,
+            batch_size   = self.cfg.batch_size,
+            num_steps    = self.cfg.num_steps,
+            if_logZ      = False                # Skip logZ estimates
+        )
+        return trainer.run(rng_key)

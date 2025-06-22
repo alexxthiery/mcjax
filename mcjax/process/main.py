@@ -13,7 +13,7 @@ sys.path.append('../../')
 import time
 from scipy.stats import gaussian_kde
 
-from algo import DDSAlgorithm,IDEMAlgorithm
+from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm
 from metrics import MMD_squared,two_wasserstein
 
 
@@ -57,6 +57,8 @@ def main():
     # Choose algorithm class
     if args.algo == "dds":
         AlgoClass = DDSAlgorithm
+    elif args.algo == "pis":
+        AlgoClass = PISAlgorithm
     elif args.algo == "idem":
         AlgoClass = IDEMAlgorithm
     else:
@@ -147,7 +149,6 @@ def main():
 
     # Visualization 
     alg.visualize_samples(samples_seq)
-
 
 
 

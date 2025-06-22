@@ -25,7 +25,6 @@ class BaseLoss(ABC):
         """
         pass
 
-
 class DDSLoss(BaseLoss):
     """
     Reverse KL / Log Variance losses for DDS (as in “dDS”).
@@ -161,3 +160,34 @@ class IDEMLoss(BaseLoss):
         loss = jnp.mean(sq_err)  # scalar
 
         return loss
+
+
+class PISLoss(BaseLoss):
+    def __init__(self, T: float, delta_t: float):
+        self.n_steps = int(T / delta_t)
+        self.delta_t = delta_t
+
+    @partial(jax.jit, static_argnums=(0, 3))
+    def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
+        # 1) sample x₀
+        key, sub = jr.split(key)
+        x = init_dist.sample(sub, batch_size)  # shape (batch, dim)
+
+        # 2) forward Euler–Maruyama with control
+        running_cost = jnp.zeros(batch_size)
+        for i in range(self.n_steps):
+            t = i * self.delta_t
+            u = control_fn(params, t, x)                 # shape (batch, dim)
+            running_cost += 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
+
+            key, sub = jr.split(key)
+            dW = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
+            x = x + u * self.delta_t + dW
+
+        # 3) terminal cost Ψ = log q_T(x) – log p_target(x)
+        log_qT = init_dist.batch(x)                     # uncontrolled log‐density
+        log_p  = target_dist.batch(x)                   # unnormalized target log‐density
+        psi    = log_qT - log_p
+
+        # 4) return mean loss
+        return jnp.mean(running_cost + psi)
