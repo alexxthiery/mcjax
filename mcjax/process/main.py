@@ -13,7 +13,7 @@ sys.path.append('../../')
 import time
 from scipy.stats import gaussian_kde
 
-from algo import DDSAlgorithm,IDEMAlgorithm
+from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm
 from metrics import MMD_squared,two_wasserstein
 
 
@@ -57,6 +57,8 @@ def main():
     # Choose algorithm class
     if args.algo == "dds":
         AlgoClass = DDSAlgorithm
+    elif args.algo == "pis":
+        AlgoClass = PISAlgorithm
     elif args.algo == "idem":
         AlgoClass = IDEMAlgorithm
     else:
@@ -70,7 +72,7 @@ def main():
         print(f"Start training with {args.algo}")
         key, sub = jr.split(key)
         t1 = time.time()
-        final_state, final_key, losses, logz_vals, logz_vars,buffer_data, buffer_size = alg.train(sub)
+        final_state, final_key, losses, logz_vals, logz_vars,*buffer_info = alg.train(sub)
         t2 = time.time()
         print(f"Tracing+Training finished in {t2 - t1:.2f} seconds.")
         alg.state = final_state  # Update the state with final trained parameters
@@ -91,6 +93,7 @@ def main():
         if args.algo == "idem" and args.target_dist == "1d":
             # plot buffer data (hist) every 10 steps
             print("Plotting buffer data histograms...")
+            buffer_data, buffer_size = buffer_info
             for i in range(0, len(buffer_data), 10):
                 plt.figure()
                 plt.hist(buffer_data[i,:buffer_size[i].astype(int),0], bins=50, density=True, alpha=0.5)
@@ -105,7 +108,7 @@ def main():
         if args.if_logZ:
             print("Plotting logZ statistics...")
             fig, ax1 = plt.subplots()
-            x = 10 + jax.numpy.arange(args.num_steps // 10)*10 if args.algo == "dds" else args.inner_iters + jax.numpy.arange(args.outer_iters) * args.inner_iters
+            x = 10 + jax.numpy.arange(args.num_steps // 10)*10 if args.algo != "idem" else args.inner_iters + jax.numpy.arange(args.outer_iters) * args.inner_iters
             ax1.plot(x, logz_vars[:len(x)], color='C0', label="logZ var")
             ax1.set_xlabel("step")
             ax1.set_ylabel("var(logZ)", color='C0')
@@ -147,7 +150,6 @@ def main():
 
     # Visualization 
     alg.visualize_samples(samples_seq)
-
 
 
 

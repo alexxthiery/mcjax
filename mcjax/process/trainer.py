@@ -87,6 +87,7 @@ class Trainer:
             # every 100 steps, print step and current loss
             def do_print(_):
                 jax.debug.print("At step {}, loss = {}", step, loss)
+                jax.debug.print("Last logZ values: {}", logz_vals[step // 10])
                 return None
 
             # branch on (step % 100 == 0)

@@ -16,7 +16,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
-from losses import DDSLoss, IDEMLoss
+from losses import DDSLoss, IDEMLoss, PISLoss
 from trainer import Trainer, InnerTrainer
 
 class BaseAlgorithm(ABC):
@@ -451,7 +451,8 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Set up optimizer (Adam) and Flax train state
-        self.opt = optax.adam(config.lr)
+        self.opt = optax.chain(optax.adam(config.lr),
+                                optax.clip(50.0))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=initial_params,
@@ -588,3 +589,136 @@ class IDEMAlgorithm(BaseAlgorithm):
         flat_losses = all_losses.reshape(-1)
         jax.debug.print("Training complete.")
         return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size
+
+
+class PISAlgorithm(BaseAlgorithm):
+    def __init__(self, config):
+        super().__init__(config)
+        if config.network_name == 'mlp':
+            self.model = MLPModel(dim=self.data_dim, T=config.K)
+        elif config.network_name == 'resblock':
+            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
+        else:
+            raise ValueError(f"Unknown model_type: {config.network_name}")
+
+        # Initialize params & optimizer state
+        key = jr.PRNGKey(config.seed)
+        key, sub = jr.split(key)
+        dummy_x = jnp.zeros((config.batch_size, self.data_dim))
+        dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
+        self.params = self.model.init(sub, dummy_x, dummy_t)
+
+        self.opt = optax.adamw(config.lr)
+        
+        self.state = train_state.TrainState.create(
+            apply_fn=self.model.apply, params=self.params, tx=self.opt
+        )
+
+        # Control function and loss
+        self.score_fn = self.make_score_fn()
+        self.loss_obj    = self.make_loss()
+
+    def make_score_fn(self):
+        """
+        Returns: score_fn(params, k, y) -> shape (batch, data_dim)
+        Implements:
+          nn1, nn2 = model.apply(params, y, t=k)
+          log_mu = target_dist.batch(y)
+          grad_log_mu = target_dist.grad_batch(y)
+          according to condition_term: 'none'/'score'/'grad_score'
+        """
+        condition = self.cfg.condition_term
+        target = self.target_dist
+
+        def score_fn(params, k, y):
+            # k: int index in [0, K-1], y: shape (batch, data_dim)
+            batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
+            nn1, nn2 = self.model.apply(params, y, batch_k)
+
+            if condition == 'none':
+                return nn1
+
+            elif condition == 'score':
+                logp = target.batch(y)  
+                normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
+                return nn1 + nn2 * normed[:, None]  
+
+            elif condition == 'grad_score':
+                gradp = target.grad_batch(y)  
+                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                return nn1 + nn2 * normed
+
+            else:
+                raise ValueError(f"Unknown condition_term: {condition}")
+
+        return jax.jit(score_fn)
+
+    def make_loss(self):
+        return PISLoss(num_steps= self.cfg.num_steps)
+    
+    @partial(jax.jit, static_argnums=(0, 3))
+    def estimate_logZ(self, params, key, num_samples: int):
+        """
+        Importance sampling logZ estimator for PIS:
+        log Z ≈ logmeanexp( - [pathcost + Ψ(x_T) ] )
+        """
+        # sample x0 ∼ ν
+        key, sub = jr.split(key)
+        x = self.init_dist.sample(sub, num_samples)    
+
+        def scan_step(carry, t):
+            x, logw, key = carry
+
+            # control and running‐cost
+            u = self.score_fn(params, t, x)             
+            cost = 0.5 * jnp.sum(u**2, axis=-1) / self.cfg.K
+
+            # Noise & stochastic‐integral term
+            key, sub = jr.split(key)
+            dW = jr.normal(sub, x.shape) * jnp.sqrt(1/ self.cfg.K)
+            stoch = jnp.sum(u * dW, axis=-1)
+
+            #evolve x and accumulate log‐weight
+            x   = x + u / self.cfg.K + dW
+            logw = logw - cost - stoch
+
+            return (x, logw, key), None
+
+        times = jnp.arange(self.cfg.K, dtype=jnp.float32) / self.cfg.K  # times in [0, 1]
+        init_carry = (x, jnp.zeros(num_samples), key)
+        (x_final, logw_final, _), _ = jax.lax.scan(
+            scan_step, init_carry, times
+        )
+
+        # terminal cost Ψ = log q_T(x) – log p_target(x)
+        log_qT = self.init_dist.batch(x_final)          
+        log_p  = self.target_dist.batch(x_final)        
+        psi    = log_qT - log_p
+
+        # final log‐weight = –[ running‐cost + stoch‐term + Ψ ]
+        logw_final = logw_final - psi
+
+        # estimate log Z via log‐mean‐exp for numerical stability
+        max_logw  = jnp.max(logw_final)
+        logZ = max_logw + jnp.log(jnp.mean(jnp.exp(logw_final - max_logw)))
+
+        return logZ
+
+    def train(self, rng_key):
+        """
+        Runs the outer training loop using the generic Trainer.
+        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
+        """
+        trainer = Trainer(
+            algorithm    = self,
+            process      = None,                # OU process not used in PIS forward pass
+            init_dist    = self.init_dist,
+            target_dist  = self.target_dist,
+            score_fn     = self.score_fn,     
+            loss_obj     = self.loss_obj,
+            state        = self.state,
+            batch_size   = self.cfg.batch_size,
+            num_steps    = self.cfg.num_steps,
+            if_logZ      = False                # Skip logZ estimates
+        )
+        return trainer.run(rng_key)
