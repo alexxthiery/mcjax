@@ -166,26 +166,37 @@ class PISLoss(BaseLoss):
     def __init__(self, num_steps: int):
         self.n_steps = num_steps
         self.delta_t = 1 / num_steps
-        self.add_score: bool = False # PIS does not use score_fn & add_score
+        self.add_score = False # PIS does not use score_fn & add_score
 
-    @partial(jax.jit, static_argnums=(0, 3))
     def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
-        # 1) sample x₀
+        # sample x₀
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)  # shape (batch, dim)
 
-        # 2) forward Euler–Maruyama with control
+        # forward Euler–Maruyama with control
         running_cost = jnp.zeros(batch_size)
-        for i in range(self.n_steps):
-            t = i * self.delta_t
+        
+        # Rewrite the for loop above by using jax.lax.scan
+        def scan_step(carry, t):
+            x, running_cost, key = carry
             u = control_fn(params, t, x)                 # shape (batch, dim)
             running_cost += 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
 
             key, sub = jr.split(key)
             dW = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
             x = x + u * self.delta_t + dW
+            
+            return (x, running_cost, key), None
+        
+        init_carry = (x, running_cost, key)
+        (x, running_cost, _), _ = jax.lax.scan(
+            scan_step,
+            init_carry,
+            jnp.arange(self.n_steps)
+        )
 
-        # 3) terminal cost Ψ = log q_T(x) – log p_target(x)
+
+        # terminal cost Ψ = log q_T(x) – log p_target(x)
         log_qT = init_dist.batch(x)                     # uncontrolled log‐density
         log_p  = target_dist.batch(x)                   # unnormalized target log‐density
         psi    = log_qT - log_p
