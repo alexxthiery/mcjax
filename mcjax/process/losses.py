@@ -166,7 +166,7 @@ class PISLoss(BaseLoss):
     def __init__(self, num_steps: int):
         self.n_steps = num_steps
         self.delta_t = 1 / num_steps
-        add_score: bool = False # PIS does not use score_fn & add_score
+        self.add_score: bool = False # PIS does not use score_fn & add_score
 
     @partial(jax.jit, static_argnums=(0, 3))
     def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
