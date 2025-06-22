@@ -108,7 +108,7 @@ def main():
         if args.if_logZ:
             print("Plotting logZ statistics...")
             fig, ax1 = plt.subplots()
-            x = 10 + jax.numpy.arange(args.num_steps // 10)*10 if args.algo == "dds" else args.inner_iters + jax.numpy.arange(args.outer_iters) * args.inner_iters
+            x = 10 + jax.numpy.arange(args.num_steps // 10)*10 if args.algo != "idem" else args.inner_iters + jax.numpy.arange(args.outer_iters) * args.inner_iters
             ax1.plot(x, logz_vars[:len(x)], color='C0', label="logZ var")
             ax1.set_xlabel("step")
             ax1.set_ylabel("var(logZ)", color='C0')
