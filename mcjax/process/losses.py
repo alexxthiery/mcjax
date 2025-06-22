@@ -161,14 +161,13 @@ class IDEMLoss(BaseLoss):
 
         return loss
 
-
 class PISLoss(BaseLoss):
     def __init__(self, num_steps: int):
         self.n_steps = num_steps
         self.delta_t = 1 / num_steps
         self.add_score = False # PIS does not use score_fn & add_score
 
-    def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
+    def __call__(self, params, key, process, init_dist, target_dist, control_fn, batch_size, **kwargs):
         # sample x₀
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)  # shape (batch, dim)
