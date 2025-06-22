@@ -72,7 +72,7 @@ def main():
         print(f"Start training with {args.algo}")
         key, sub = jr.split(key)
         t1 = time.time()
-        final_state, final_key, losses, logz_vals, logz_vars,buffer_data, buffer_size = alg.train(sub)
+        final_state, final_key, losses, logz_vals, logz_vars,*buffer_info = alg.train(sub)
         t2 = time.time()
         print(f"Tracing+Training finished in {t2 - t1:.2f} seconds.")
         alg.state = final_state  # Update the state with final trained parameters
@@ -93,6 +93,7 @@ def main():
         if args.algo == "idem" and args.target_dist == "1d":
             # plot buffer data (hist) every 10 steps
             print("Plotting buffer data histograms...")
+            buffer_data, buffer_size = buffer_info
             for i in range(0, len(buffer_data), 10):
                 plt.figure()
                 plt.hist(buffer_data[i,:buffer_size[i].astype(int),0], bins=50, density=True, alpha=0.5)
