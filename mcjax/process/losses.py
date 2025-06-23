@@ -189,7 +189,7 @@ class PISLoss(BaseLoss):
         (xT, running, _), _ = jax.lax.scan(body, (x, running_cost, key), times)
 
         # terminal cost Ψ = log q_T(x_T) - log p(x_T)
-        log_qT = self.process.log_marginal(xT, self.n_steps)
+        log_qT = process.log_marginal(xT, self.n_steps)
         log_p  = target_dist.batch(xT)
         psi    = log_qT - log_p
 
@@ -249,7 +249,7 @@ class CMCDLoss(BaseLoss):
         (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
 
         # endpoint: + log p_ref(xT) - log p_target(xT)
-        log_qT = self.process.log_marginal(xT, self.n_steps)
+        log_qT = process.log_marginal(xT, self.n_steps)
         log_p  = target_dist.batch(xT)
         log_ratio = log_ratio + log_qT - log_p
 
