@@ -598,8 +598,9 @@ class PISAlgorithm(BaseAlgorithm):
         )
         
         # Include initial state in sequence
-        full_seq = jnp.concatenate(x0[None, ...], seq, axis=0)
+        full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
         return full_seq
+
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
