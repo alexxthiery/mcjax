@@ -670,15 +670,15 @@ class PISAlgorithm(BaseAlgorithm):
 
             # control and running‐cost
             u = self.score_fn(params, t, x)             
-            cost = 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
+            cost = 0.5 * jnp.sum(u**2, axis=-1) / self.cfg.K
 
             # Noise & stochastic‐integral term
             key, sub = jr.split(key)
-            dW = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
+            dW = jr.normal(sub, x.shape) * jnp.sqrt(1/ self.cfg.K)
             stoch = jnp.sum(u * dW, axis=-1)
 
             #evolve x and accumulate log‐weight
-            x   = x + u * self.delta_t + dW
+            x   = x + u / self.cfg.K + dW
             logw = logw - cost - stoch
 
             return (x, logw, key), None
