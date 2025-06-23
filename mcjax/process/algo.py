@@ -683,7 +683,7 @@ class PISAlgorithm(BaseAlgorithm):
 
             return (x, logw, key), None
 
-        times = jnp.arange(self.K, dtype=jnp.float32) / self.K  # times in [0, 1]
+        times = jnp.arange(self.cfg.K, dtype=jnp.float32) / self.cfg.K  # times in [0, 1]
         init_carry = (x, jnp.zeros(num_samples), key)
         (x_final, logw_final, _), _ = jax.lax.scan(
             scan_step, init_carry, times
