@@ -647,7 +647,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
     Implements both MCD (use_control_in_denominator=False) and
     CMCD (use_control_in_denominator=True) under the same code path.
     """
-    def __init__(self, config, use_control_in_denominator: bool):
+    def __init__(self, config):
         super().__init__(config)
         if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=config.K)
@@ -669,7 +669,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         )
 
         self.score_fn = self.make_score_fn()
-        self.use_control_in_denominator = use_control_in_denominator # True for CMCD, False for MCD
+        self.use_control_in_denominator = self.config.use_control_in_denominator # True for CMCD, False for MCD
         self.loss_obj = self.make_loss()
 
 
