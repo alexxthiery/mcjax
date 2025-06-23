@@ -191,15 +191,14 @@ class PISLoss(BaseLoss):
 
         return jnp.mean(running + psi)
 
-
 class CMCDLoss(BaseLoss):
     def __init__(self,use_control_in_denominator):
         self.use_ctrl_den = use_control_in_denominator
-        self.sigma2 = self.process.sigma**2
 
     def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
         self.delta_t = 1/process.K
         self.n_steps = process.K
+        self.sigma2 = process.sigma**2
 
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)
