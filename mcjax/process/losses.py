@@ -37,7 +37,7 @@ class DDSLoss(BaseLoss):
         K = process.K
         sigma = process.sigma
 
-        # 1) sample y0 ~ init_dist
+        # sample y0 ~ init_dist
         key, sub = jr.split(key)
         y0 = init_dist.sample(sub, batch_size)
 
@@ -163,96 +163,98 @@ class IDEMLoss(BaseLoss):
         return loss
 
 class PISLoss(BaseLoss):
-    def __init__(self, num_steps: int):
-        self.n_steps = num_steps
-        self.delta_t = 1 / num_steps
-        self.add_score = False # PIS does not use score_fn & add_score
-
-    def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
-        key, sub = jr.split(key)
-        x = init_dist.sample(sub, batch_size)  
-
-        # forward Euler–Maruyama with control
-        running_cost = jnp.zeros(batch_size)
-        
-        def scan_step(carry, t):
-            x, running_cost, key = carry
-            u = score_fn(params, t, x)                 
-            running_cost += 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
-
-            key, sub = jr.split(key)
-            dW = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
-            x = x + u * self.delta_t + dW
-            
-            return (x, running_cost, key), None
-        
-        init_carry = (x, running_cost, key)
-        (x, running_cost, _), _ = jax.lax.scan(
-            scan_step,
-            init_carry,
-            jnp.arange(self.n_steps)
-        )
+    def __init__(self):
+        self.delta_t = 1/self.process.K
+        self.n_steps = self.process.K      # align with OU steps
 
 
-        # terminal cost Ψ = log q_T(x) – log p_target(x)
-        log_qT = init_dist.batch(x)                     
-        log_p  = target_dist.batch(x)                   
-        psi    = log_qT - log_p
-
-        # return mean loss
-        return jnp.mean(running_cost + psi)
-
-
-class CMCDLoss:
-    """
-    Implements the time-discretized loss for CMCD vs MCD. (Eq (24) in the paper)
-    If use_control_in_denominator=False, control terms in the denominator log-ratio
-    are zero, recovering the MCD objective.
-    """
-    def __init__(self, K: int, use_control_in_denominator: bool):
-        self.n_steps = K
-        self.delta_t = 1/self.n_steps
-        self.use_ctrl_den = use_control_in_denominator
-        self.sigma2 = 2.0  
-        self.add_score = False # MCD does not use score_fn & add_score
-
-    def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs ):
+    @partial(jax.jit, static_argnums=(0,3))
+    def __call__(self, params, key, init_dist, target_dist, score_fn, batch_size, **kwargs):
+        # forward controlled SDE from x0 ~ ν
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)
 
-        # accumulate log‐ratio over K steps
+        running_cost = jnp.zeros(batch_size) # first term in the loss function
+        def body(carry, t):
+            x, running, key = carry
+            u = score_fn(params, t, x)
+            running = running + 0.5*jnp.sum(u**2, axis=-1)*self.delta_t
+
+            key, sub = jr.split(key)
+            dW = jr.normal(sub, x.shape)*jnp.sqrt(self.delta_t)
+            x  = x + u*self.delta_t + dW
+            return (x, running, key), None
+
+        times = jnp.arange(self.n_steps, dtype=jnp.float32)*self.delta_t
+        (xT, running, _), _ = jax.lax.scan(body, (x, running_cost, key), times)
+
+        # terminal cost Ψ = log q_T(x_T) - log p(x_T)
+        log_qT = self.process.log_marginal(xT, self.n_steps)
+        log_p  = target_dist.batch(xT)
+        psi    = log_qT - log_p
+
+        return jnp.mean(running + psi)
+
+
+class CMCDLoss(BaseLoss):
+    def __init__(self, delta_t: float, use_control_in_denominator: bool):
+        self.delta_t = 1/self.process.K
+        self.n_steps = self.process.K
+        self.use_ctrl_den = use_control_in_denominator
+        self.sigma2 = self.process.sigma**2
+
+    def __call__(self, params, key, init_dist, target_dist, score_fn, batch_size, **kwargs):
+        key, sub = jr.split(key)
+        x = init_dist.sample(sub, batch_size)
+
         log_ratio = jnp.zeros(batch_size)
-        for i in range(self.n_steps):
-            t = i * self.delta_t
+        def body(carry, t):
+            x, lr, key = carry
             u = score_fn(params, t, x)
 
-            # forward transition kernel log‐density
-            mu_fwd = x + (self.sigma2 * target_dist.grad_batch(x) + u) * self.delta_t
-            log_p_fwd = logpdf(
-                x, loc=mu_fwd, scale=jnp.sqrt(2*self.sigma2*self.delta_t)
-            ).sum(-1)
+            # forward mean μ_fwd = x + (σ² ∇log p + u) dt
+            gradp = target_dist.grad_batch(x)
+            mu_fwd = x + (self.sigma2 * gradp + u)*self.delta_t
 
-            grad_term = self.sigma2 * target_dist.grad_batch(x)
-            b = jax.lax.cond(
+            # backward mean μ_bwd depends on flag
+            gradp = target_dist.grad_batch(x)
+            factor = jax.lax.cond(
                 self.use_ctrl_den,
-                lambda _: grad_term - u,   # CMCD
-                lambda _: grad_term,       # MCD
+                lambda _: -1.0, # CMCD
+                lambda _: 0.0,  # MCD
                 operand=None
             )
+            mu_bwd = x + (self.sigma2 * gradp + factor * u)*self.delta_t
 
-            mu_bwd = x + b * self.delta_t
-            log_p_bwd = logpdf(
-                x, loc=mu_bwd, scale=jnp.sqrt(2*self.sigma2*self.delta_t)
-            ).sum(-1)
+            # log‐density of Gaussian kernels N(x ; μ_*, 2σ²Δt)
+            def log_gauss(x, mu):
+                var = 2*self.sigma2*self.delta_t
+                D   = x.shape[-1]
+                norm = -0.5*(D*jnp.log(2*jnp.pi*var))
+                quad = -0.5*jnp.sum((x-mu)**2, axis=-1)/var
+                return norm + quad
 
-            log_ratio = log_ratio + (log_p_fwd - log_p_bwd)
+            log_pfwd = log_gauss(x, mu_fwd)
+            log_pbwd = log_gauss(x, mu_bwd)
+            lr = lr + (log_pfwd - log_pbwd)
 
             # step forward
             key, sub = jr.split(key)
-            noise = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
+            noise = jr.normal(sub, x.shape)*jnp.sqrt(self.delta_t)
             x = mu_fwd + noise
+            return (x, lr, key), None
 
-        # end‐point cost
-        log_ratio = log_ratio + init_dist.batch(x) - target_dist.batch(x)
+        times = jnp.arange(self.n_steps, dtype=jnp.float32)*self.delta_t
+        (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
 
+        # endpoint: + log p_ref(xT) - log p_target(xT)
+        log_qT = self.process.log_marginal(xT, self.n_steps)
+        log_p  = target_dist.batch(xT)
+        log_ratio = log_ratio + log_qT - log_p
+
+        # loss = E[ - log_ratio ]
         return jnp.mean(-log_ratio)
+
+    
+
+
