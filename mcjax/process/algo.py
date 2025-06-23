@@ -451,7 +451,8 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Set up optimizer (Adam) and Flax train state
-        self.opt = optax.adam(config.lr)
+        self.opt = optax.chain(optax.adam(config.lr),
+                                optax.clip(50.0))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=initial_params,
@@ -638,12 +639,12 @@ class PISAlgorithm(BaseAlgorithm):
                 return nn1
 
             elif condition == 'score':
-                logp = target.batch(y)  # shape (batch,)
+                logp = target.batch(y)  
                 normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
                 return nn1 + nn2 * normed[:, None]  
 
             elif condition == 'grad_score':
-                gradp = target.grad_batch(y)  # shape (batch, dim)
+                gradp = target.grad_batch(y)  
                 normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
                 return nn1 + nn2 * normed
 
