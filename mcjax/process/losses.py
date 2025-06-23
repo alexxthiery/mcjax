@@ -163,6 +163,10 @@ class IDEMLoss(BaseLoss):
         return loss
 
 class PISLoss(BaseLoss):
+
+    def __init__(self, add_score: bool = False):
+        self.add_score = add_score # NO NEED, just to align with other losses
+
     def __call__(self, params, key, process,init_dist, target_dist, score_fn, batch_size, **kwargs):
         # forward controlled SDE from x0 ~ ν
         self.delta_t = 1/process.K
@@ -192,8 +196,9 @@ class PISLoss(BaseLoss):
         return jnp.mean(running + psi)
 
 class CMCDLoss(BaseLoss):
-    def __init__(self,use_control_in_denominator):
+    def __init__(self,use_control_in_denominator, add_score: bool = False):
         self.use_ctrl_den = use_control_in_denominator
+        self.add_score = add_score  # NO NEED, just to align with other losses
 
     def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
         self.delta_t = 1/process.K
