@@ -675,7 +675,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
 
     def make_loss(self):
         return CMCDLoss(
-            K = self.config.K,
+            K = self.cfg.K,
             use_control_in_denominator = self.use_control_in_denominator
         )
 
@@ -698,7 +698,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         key, sub = jr.split(rng_key)
         x0 = self.init_dist.sample(sub, num_samples) 
 
-        times = jnp.arange(self.config.K, dtype=jnp.float32) / self.config.K
+        times = jnp.arange(self.cfg.K, dtype=jnp.float32) / self.cfg.K
 
         def body(carry, t):
             x, key = carry
