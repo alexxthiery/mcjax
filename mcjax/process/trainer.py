@@ -23,7 +23,7 @@ class Trainer:
                  state: train_state.TrainState,
                  batch_size: int,
                  num_steps: int,
-                 if_logZ: bool = False):
+                 if_logZ: bool):
         self.alg         = algorithm
         self.process     = process
         self.init_dist   = init_dist
@@ -89,7 +89,6 @@ class Trainer:
             # every 100 steps, print step and current loss
             def do_print(_):
                 jax.debug.print("At step {}, loss = {}", step, loss)
-                jax.debug.print("Last logZ values: {}", logz_vals[step // 10])
                 return None
 
             # branch on (step % 100 == 0)

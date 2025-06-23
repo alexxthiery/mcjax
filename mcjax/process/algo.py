@@ -564,6 +564,42 @@ class PISAlgorithm(BaseAlgorithm):
 
     def make_loss(self):
         return PISLoss(add_score=self.cfg.add_score)
+    
+    
+    @partial(jax.jit, static_argnums=(0, 3))
+    def sample(self, params, rng_key, num_samples: int):
+        """Forward SDE simulation with learned control"""
+        T_total = 1.0  
+        delta_t = T_total / self.cfg.K
+        
+        key, sub = jr.split(rng_key)
+        x0 = self.init_dist.sample(sub, num_samples) 
+        
+        def body(carry, k):
+            x_curr, key = carry
+            key, sub = jr.split(key)
+            
+            # Get control at current state and time
+            t_val = k * delta_t
+            t_batch = jnp.full((num_samples,), t_val, dtype=jnp.float32)
+            u = self.score_fn(params, t_batch, x_curr)  
+            
+            # Euler-Maruyama step
+            noise = jr.normal(sub, shape=x_curr.shape) * jnp.sqrt(delta_t)
+            x_next = x_curr + u * delta_t + noise
+            
+            return (x_next, key), x_next
+        
+        init_carry = (x0, key)
+        (x_final, _), seq = jax.lax.scan(
+            body,
+            init_carry,
+            jnp.arange(self.cfg.K) 
+        )
+        
+        # Include initial state in sequence
+        full_seq = jnp.concatenate(x0[None, ...], seq, axis=0)
+        return full_seq
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):

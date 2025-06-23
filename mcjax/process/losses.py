@@ -185,11 +185,15 @@ class PISLoss(BaseLoss):
             x  = x + u*self.delta_t + dW
             return (x, running, key), None
 
-        times = jnp.arange(self.n_steps, dtype=jnp.float32)*self.delta_t
+        times = jnp.arange(self.n_steps, dtype=jnp.float32)
         (xT, running, _), _ = jax.lax.scan(body, (x, running_cost, key), times)
 
         # terminal cost Ψ = log q_T(x_T) - log p(x_T)
-        log_qT = process.log_marginal(xT, self.n_steps)
+        T_total = 1.0  
+        var_total = 1.0 + T_total  # Initial variance (1) + Brownian variance (T)
+        d = xT.shape[-1]
+        log_qT = -0.5 * d * jnp.log(2 * jnp.pi * var_total) \
+                - 0.5 * jnp.sum(xT**2, axis=-1) / var_total
         log_p  = target_dist.batch(xT)
         psi    = log_qT - log_p
 
@@ -245,7 +249,7 @@ class CMCDLoss(BaseLoss):
             x = mu_fwd + noise
             return (x, lr, key), None
 
-        times = jnp.arange(self.n_steps, dtype=jnp.float32)*self.delta_t
+        times = jnp.arange(self.n_steps, dtype=jnp.float32)
         (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
 
         # endpoint: + log p_ref(xT) - log p_target(xT)
