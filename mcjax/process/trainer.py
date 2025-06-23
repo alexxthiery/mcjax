@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from flax.training import train_state
+from functools import partial
 
 class Trainer:
     """
@@ -22,7 +23,7 @@ class Trainer:
                  state: train_state.TrainState,
                  batch_size: int,
                  num_steps: int,
-                 if_logZ: bool = False):
+                 if_logZ: bool):
         self.alg         = algorithm
         self.process     = process
         self.init_dist   = init_dist
@@ -54,6 +55,7 @@ class Trainer:
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
+    @partial(jax.jit, static_argnums=(0,))
     def run(self, rng_key):
         """
         Runs `num_steps` of training with jax.lax.scan.  
@@ -87,7 +89,6 @@ class Trainer:
             # every 100 steps, print step and current loss
             def do_print(_):
                 jax.debug.print("At step {}, loss = {}", step, loss)
-                jax.debug.print("Last logZ values: {}", logz_vals[step // 10])
                 return None
 
             # branch on (step % 100 == 0)
@@ -147,6 +148,7 @@ class InnerTrainer:
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss
 
+    @partial(jax.jit, static_argnums=(0,))
     def run(self, rng_key):
         """
         Runs exactly `inner_iters` gradient steps, all inside a single lax.scan.

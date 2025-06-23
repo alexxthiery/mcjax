@@ -11,6 +11,7 @@ from scipy.stats import gaussian_kde
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
 from flax import struct
+from jax.scipy.special import logsumexp
 
 from models import MLPModel, ResBlockModel
 from ou import OU
@@ -51,10 +52,10 @@ class BaseAlgorithm(ABC):
             self.target_dist = GMM40()
             self.data_dim = 2
         elif config.target_dist == '1d':
-            mu = jnp.array([[-2.],[2.]])
-            dist_sigma = jnp.array([0.5,0.5])
+            mu = jnp.array([[-2.],[2.],[4.]])
+            dist_sigma = jnp.array([0.5,0.5,0.2])
             log_var = jnp.log(dist_sigma**2)
-            weights = jnp.array([0.3,0.7])
+            weights = jnp.array([0.5,0.3,0.2])
             self.target_dist = MixedIsotropicGauss(
                 mu=mu, log_var=log_var, weights=weights
             )
@@ -68,7 +69,7 @@ class BaseAlgorithm(ABC):
 
         # Build the reference initial distribution
         self.init_dist = IsotropicGauss(
-            mu=jnp.zeros(self.data_dim), log_var=0.0
+            mu=jnp.zeros(self.data_dim), log_var=1.0
         )
         
         # create timesteps / beta / alpha schedule
@@ -112,6 +113,7 @@ class BaseAlgorithm(ABC):
             elif condition == 'grad_score':
                 gradp = target.grad_batch(y)  
                 normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                # normed = gradp # test without batch normalization
                 return nn1 + nn2 * normed
 
             else:
@@ -126,12 +128,25 @@ class BaseAlgorithm(ABC):
         """
         pass
 
-    @abstractmethod
+    @partial(jax.jit, static_argnums=(0,))
     def train(self, rng_key):
         """
-        Runs the training loop, returns final params, train‐loss history, maybe logZ stats.
+        Runs the outer training loop using the generic Trainer.
+        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
         """
-        pass
+        trainer = Trainer(
+            algorithm    = self,
+            process      = self.ou,                
+            init_dist    = self.init_dist,
+            target_dist  = self.target_dist,
+            score_fn     = self.score_fn,     
+            loss_obj     = self.loss_obj,
+            state        = self.state,
+            batch_size   = self.cfg.batch_size,
+            num_steps    = self.cfg.num_steps,
+            if_logZ      = self.cfg.if_logZ              
+        )
+        return trainer.run(rng_key)
 
     def sample(self, params, rng_key, num_samples: int):
         """
@@ -260,7 +275,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/density_evolution.mp4'
+            fname = f'{self.cfg.results_dir}/density_evolution_{self.cfg.algo}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
@@ -311,7 +326,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/sample_movement.mp4'
+            fname = f'{self.cfg.results_dir}/sample_movement_{self.cfg.algo}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
@@ -344,10 +359,7 @@ class DDSAlgorithm(BaseAlgorithm):
         # optimizer (Adam)
         # self.opt = optax.adam(config.lr)
         # add gradient clipping
-        optax.chain(
-            optax.clip(20.0),
-            optax.adamw(config.lr)
-        )
+        self.opt = optax.chain(optax.clip(50.0), optax.adam(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
         )
@@ -361,24 +373,6 @@ class DDSAlgorithm(BaseAlgorithm):
     def make_loss(self):
         return DDSLoss(add_score=self.cfg.add_score)
 
-    def train(self, rng_key):
-        """
-        Run the training loop (jax.lax.scan).
-        Returns (final_params, losses, maybe logZs).
-        """
-        trainer = Trainer(
-            algorithm=self,
-            process=self.ou,
-            init_dist=self.init_dist,
-            target_dist=self.target_dist,
-            score_fn=self.score_fn,
-            loss_obj=self.loss_obj,
-            state=self.state,
-            batch_size=self.cfg.batch_size,
-            num_steps=self.cfg.num_steps,
-            if_logZ=self.cfg.if_logZ
-        )
-        return trainer.run(rng_key)
 
 class IDEMAlgorithm(BaseAlgorithm):
     """
@@ -444,8 +438,7 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Set up optimizer (Adam) and Flax train state
-        self.opt = optax.chain(optax.adam(config.lr),
-                                optax.clip(50.0))
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=initial_params,
@@ -482,6 +475,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
+    # override train function
     @partial(jax.jit, static_argnums=(0,))
     def train(self, rng_key):
         inner_trainer = InnerTrainer(
@@ -543,7 +537,6 @@ class IDEMAlgorithm(BaseAlgorithm):
         jax.debug.print("Training complete.")
         return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size
 
-
 class PISAlgorithm(BaseAlgorithm):
     def __init__(self, config):
         super().__init__(config)
@@ -561,7 +554,7 @@ class PISAlgorithm(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(sub, dummy_x, dummy_t)
 
-        self.opt = optax.adamw(config.lr)
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
@@ -572,82 +565,105 @@ class PISAlgorithm(BaseAlgorithm):
         self.loss_obj    = self.make_loss()
 
     def make_loss(self):
-        return PISLoss(num_steps= self.cfg.num_steps)
+        return PISLoss(add_score=self.cfg.add_score)
     
+    
+    @partial(jax.jit, static_argnums=(0, 3))
+    def sample(self, params, rng_key, num_samples: int):
+        """Forward SDE simulation with learned control"""
+        T_total = 1.0  
+        delta_t = T_total / self.cfg.K
+        
+        key, sub = jr.split(rng_key)
+        x0 = self.init_dist.sample(sub, num_samples) 
+        
+        def body(carry, k):
+            x_curr, key = carry
+            key, sub = jr.split(key)
+            
+            # Get control at current state and time
+            t_batch = jnp.full((num_samples,), k, dtype=jnp.float32)
+            u = self.score_fn(params, t_batch, x_curr)  
+            
+            # Euler-Maruyama step
+            noise = jr.normal(sub, shape=x_curr.shape) * jnp.sqrt(delta_t)
+            x_next = x_curr + u * delta_t + noise
+            
+            return (x_next, key), x_next
+        
+        init_carry = (x0, key)
+        (x_final, _), seq = jax.lax.scan(
+            body,
+            init_carry,
+            jnp.arange(self.cfg.K) 
+        )
+        
+        # Include initial state in sequence
+        full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
+        return full_seq
+
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
         """
-        Importance sampling logZ estimator for PIS:
-        log Z ≈ logmeanexp( - [pathcost + Ψ(x_T) ] )
+        Estimate log normalizing constant using Girsanov's theorem
+        for the controlled forward SDE.
         """
-        # sample x0 ∼ ν
+        T_total = 1.0  # Total simulation time
+        delta_t = T_total / self.cfg.K
+        
         key, sub = jr.split(key)
-        x = self.init_dist.sample(sub, num_samples)    
-
-        def scan_step(carry, t):
-            x, logw, key = carry
-
-            # control and running‐cost
-            u = self.score_fn(params, t, x)             
-            cost = 0.5 * jnp.sum(u**2, axis=-1) / self.cfg.K
-
-            # Noise & stochastic‐integral term
+        x0 = self.init_dist.sample(sub, num_samples) 
+        
+        # Initialize stochastic integral and running cost
+        stochastic_integral = jnp.zeros(num_samples)
+        running_cost = jnp.zeros(num_samples)
+        
+        def body(carry, k):
+            x_curr, stoch_int, run_cost, key = carry
             key, sub = jr.split(key)
-            dW = jr.normal(sub, x.shape) * jnp.sqrt(1/ self.cfg.K)
-            stoch = jnp.sum(u * dW, axis=-1)
-
-            #evolve x and accumulate log‐weight
-            x   = x + u / self.cfg.K + dW
-            logw = logw - cost - stoch
-
-            return (x, logw, key), None
-
-        times = jnp.arange(self.cfg.K, dtype=jnp.float32) / self.cfg.K  # times in [0, 1]
-        init_carry = (x, jnp.zeros(num_samples), key)
-        (x_final, logw_final, _), _ = jax.lax.scan(
-            scan_step, init_carry, times
+            
+            # Get control at current state and time
+            t_batch = jnp.full((num_samples,), k, dtype=jnp.float32)
+            u = self.score_fn(params, t_batch, x_curr) 
+            
+            # Generate Brownian increment
+            dW = jr.normal(sub, shape=x_curr.shape) * jnp.sqrt(delta_t)
+            
+            # Update state
+            x_next = x_curr + u * delta_t + dW
+            
+            # Update stochastic integral: ∫ u dW
+            stoch_int_update = jnp.sum(u * dW, axis=-1)
+            new_stoch_int = stoch_int + stoch_int_update
+            
+            run_cost_update = 0.5 * jnp.sum(u**2, axis=-1) * delta_t
+            new_run_cost = run_cost + run_cost_update
+            
+            return (x_next, new_stoch_int, new_run_cost, key), None
+        
+        init_carry = (x0, stochastic_integral, running_cost, key)
+        (xT, stoch_int_final, run_cost_final, _), _ = jax.lax.scan(
+            body,
+            init_carry,
+            jnp.arange(self.cfg.K)
         )
-
-        # terminal cost Ψ = log q_T(x) – log p_target(x)
-        log_qT = self.init_dist.batch(x_final)          
-        log_p  = self.target_dist.batch(x_final)        
-        psi    = log_qT - log_p
-
-        # final log‐weight = –[ running‐cost + stoch‐term + Ψ ]
-        logw_final = logw_final - psi
-
-        # estimate log Z via log‐mean‐exp for numerical stability
-        max_logw  = jnp.max(logw_final)
-        logZ = max_logw + jnp.log(jnp.mean(jnp.exp(logw_final - max_logw)))
-
+        
+        # Compute terminal cost: log p_target(xT)
+        log_p_target = self.target_dist.batch(xT)
+        
+        # Compute log reference density (initial distribution)
+        log_ref = self.init_dist.batch(x0)
+        logZ = -stoch_int_final - run_cost_final + log_p_target - log_ref
+        
         return logZ
-
-    def train(self, rng_key):
-        """
-        Runs the outer training loop using the generic Trainer.
-        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
-        """
-        trainer = Trainer(
-            algorithm    = self,
-            process      = None,                # OU process not used in PIS forward pass
-            init_dist    = self.init_dist,
-            target_dist  = self.target_dist,
-            score_fn     = self.score_fn,     
-            loss_obj     = self.loss_obj,
-            state        = self.state,
-            batch_size   = self.cfg.batch_size,
-            num_steps    = self.cfg.num_steps,
-            if_logZ      = False                # Skip logZ estimates
-        )
-        return trainer.run(rng_key)
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
     """
     Implements both MCD (use_control_in_denominator=False) and
-    CMCD (use_control_in_denominator=True) under the same code path.
+    CMCD (use_control_in_denominator=True) 
     """
-    def __init__(self, config, use_control_in_denominator: bool):
+    def __init__(self, config):
         super().__init__(config)
         if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=config.K)
@@ -661,7 +677,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(key, dummy_x, dummy_t)
 
-        self.opt = optax.chain(optax.clip(20.0), optax.adamw(config.lr))
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=self.params,
@@ -669,51 +685,84 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         )
 
         self.score_fn = self.make_score_fn()
-        self.use_control_in_denominator = use_control_in_denominator # True for CMCD, False for MCD
+        self.use_control_in_denominator = config.use_control_in_denominator # True for CMCD, False for MCD
         self.loss_obj = self.make_loss()
 
 
     def make_loss(self):
         return CMCDLoss(
-            K = self.config.K,
-            use_control_in_denominator = self.use_control_in_denominator
+            use_control_in_denominator = self.use_control_in_denominator,
+            add_score=self.cfg.add_score
         )
-
-    def train(self, rng_key):
-        trainer = Trainer(
-            algorithm    = self,
-            process      = object(), # no OU process needed for CMCD/MCD
-            init_dist    = self.init_dist,
-            target_dist  = self.target_dist,
-            score_fn     = self.score_fn,
-            loss_obj     = self.loss_obj,
-            state        = self.state,
-            batch_size   = self.cfg.batch_size,
-            num_steps    = self.cfg.num_steps,
-            if_logZ      = False
-        )
-        return trainer.run(rng_key)
-
-    def sample_controlled(self, params, rng_key, num_samples):
-        key, sub = jr.split(rng_key)
-        x0 = self.init_dist.sample(sub, num_samples) 
-
-        times = jnp.arange(self.config.K, dtype=jnp.float32) / self.config.K
-
-        def body(carry, t):
-            x, key = carry
-            # control and drift
-            u = self.score_fn(params, t, x)  
-            drift = self.loss_obj.sigma2 * self.target_dist.grad_log(x) + u
-            # noise
+    
+    def sample(self, params, rng_key, num_samples):
+        """
+        Euler-Maruyama sampler returning the full trajectory for CMCD/MCD.
+        Output shape: (K+1, num_samples, dim), including initial state.
+        """
+        @jax.jit
+        def gen(key):
             key, sub = jr.split(key)
-            noise = jr.normal(sub, x.shape) * jnp.sqrt(self.loss_obj.delta_t)
-            # state update
-            x = x + drift * self.loss_obj.delta_t + noise
-            return (x, key), None
-        
-        init_carry = (x0, key)
-        (x_final, key_final), _ = jax.lax.scan(body, init_carry, times)
+            x0 = self.init_dist.sample(sub, num_samples) 
+            delta_t = 1.0 / self.ou.K
 
-        return x_final
+            def body(carry, i):
+                x, key = carry
+                u = self.score_fn(params, i, x)
+                gradp = self.target_dist.grad_batch(x)
+                drift = self.ou.sigma**2 * gradp + u
+                key, sub = jr.split(key)
+                noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
+                x_new = x + drift * delta_t + noise
+                return (x_new, key), x_new
 
+            steps = jnp.arange(self.ou.K, dtype=jnp.int32)
+            (final, _), seq = jax.lax.scan(body, (x0, key), steps)
+            full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
+            return full_seq
+
+        return gen(rng_key)
+
+
+    @partial(jax.jit, static_argnums=(0, 3))
+    def estimate_logZ(self, params, key, num_samples: int):
+        """
+        Use importance sampling with the log-ratio from CMCDLoss.
+        logZ ≈ logmeanexp(log_ratio)
+        """
+        # Reuse the same scan as in CMCDLoss but return all log_ratios
+        key, sub = jr.split(key)
+        x = self.init_dist.sample(sub, num_samples)
+        log_ratio = jnp.zeros(num_samples)
+        delta_t = 1.0 / self.ou.K
+        def body(carry, t):
+            x, lr, key = carry
+            u = self.score_fn(params, t, x)
+            gradp = self.target_dist.grad_batch(x)
+            mu_fwd = x + (self.ou.sigma**2 * gradp + u) * delta_t
+            factor = -1.0 if self.loss_obj.use_ctrl_den else 0.0
+            mu_bwd = x + (self.ou.sigma**2 * gradp + factor * u) * delta_t
+            # log p forward/backward
+            def log_gauss(x, mu):
+                var = 2 * (self.ou.sigma**2) * delta_t
+                D = x.shape[-1]
+                norm = -0.5 * (D * jnp.log(2*jnp.pi*var))
+                quad = -0.5 * jnp.sum((x - mu)**2, axis=-1) / var
+                return norm + quad
+            log_pfwd = log_gauss(x, mu_fwd)
+            log_pbwd = log_gauss(x, mu_bwd)
+            lr = lr + (log_pfwd - log_pbwd)
+            key, sub = jr.split(key)
+            noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
+            x = mu_fwd + noise
+            return (x, lr, key), None
+        times = jnp.arange(self.ou.K, dtype=jnp.float32) * (1.0 / self.ou.K)
+        (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
+        # add endpoint
+        log_qT = self.ou.log_marginal(xT, self.ou.K)
+        log_p  = self.target_dist.batch(xT)
+        log_ratio = log_ratio + log_qT - log_p
+        # estimate logZ
+        M = log_ratio.shape[0]
+        sum_log = logsumexp(log_ratio)        
+        return sum_log - jnp.log(M)

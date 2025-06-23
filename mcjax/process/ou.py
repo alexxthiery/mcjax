@@ -83,3 +83,17 @@ class OU:
         # Initialize carry with (y_K = x1, PRNG key)
         (y0, _key) = jax.lax.fori_loop(0, self.K, body, (x1, key))
         return y0
+    
+    
+    def log_marginal(self, x: jnp.ndarray, k: int) -> jnp.ndarray:
+        """
+        Compute the log marginal density of x at time index k for 
+        standard gaussian inital dstribution
+        """
+        # compute total variance factor: v = σ² (1 - ∏ (1-α))
+        prod_1m = jnp.prod(1.0 - self.alpha[:k])
+        var = self.sigma**2 * (1.0 - prod_1m)
+        D   = x.shape[-1]
+        norm = -0.5 * (D * jnp.log(2*jnp.pi*var))
+        quad = -0.5 * jnp.sum(x**2, axis=-1) / var
+        return norm + quad
