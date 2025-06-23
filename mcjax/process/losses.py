@@ -163,12 +163,10 @@ class IDEMLoss(BaseLoss):
         return loss
 
 class PISLoss(BaseLoss):
-    def __init__(self):
-        self.delta_t = 1/self.process.K
-        self.n_steps = self.process.K      # align with OU steps
-
-    def __call__(self, params, key, init_dist, target_dist, score_fn, batch_size, **kwargs):
+    def __call__(self, params, key, process,init_dist, target_dist, score_fn, batch_size, **kwargs):
         # forward controlled SDE from x0 ~ ν
+        self.delta_t = 1/process.K
+        self.n_steps = process.K      # align with OU steps
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)
 
@@ -196,12 +194,13 @@ class PISLoss(BaseLoss):
 
 class CMCDLoss(BaseLoss):
     def __init__(self,use_control_in_denominator):
-        self.delta_t = 1/self.process.K
-        self.n_steps = self.process.K
         self.use_ctrl_den = use_control_in_denominator
         self.sigma2 = self.process.sigma**2
 
-    def __call__(self, params, key, init_dist, target_dist, score_fn, batch_size, **kwargs):
+    def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
+        self.delta_t = 1/process.K
+        self.n_steps = process.K
+
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)
 
