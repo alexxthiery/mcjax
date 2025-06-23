@@ -669,7 +669,7 @@ class PISAlgorithm(BaseAlgorithm):
             x, logw, key = carry
 
             # control and running‐cost
-            u = self.control_fn(params, t, x)             
+            u = self.score_fn(params, t, x)             
             cost = 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
 
             # Noise & stochastic‐integral term
