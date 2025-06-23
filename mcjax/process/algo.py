@@ -16,7 +16,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
-from losses import DDSLoss, IDEMLoss, PISLoss
+from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss
 from trainer import Trainer, InnerTrainer
 
 class BaseAlgorithm(ABC):
@@ -84,12 +84,40 @@ class BaseAlgorithm(ABC):
         # make the OU process
         self.ou = OU(alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
 
-    @abstractmethod
     def make_score_fn(self):
         """
-        Returns a Python function: score_fn(params, k, y) → shape (batch, data_dim).
+        Returns: score_fn(params, k, y) -> shape (batch, data_dim)
+        Implements:
+          nn1, nn2 = model.apply(params, y, t=k)
+          log_mu = target_dist.batch(y)
+          grad_log_mu = target_dist.grad_batch(y)
+          according to condition_term: 'none'/'score'/'grad_score'
         """
-        pass
+        condition = self.cfg.condition_term
+        target = self.target_dist
+
+        def score_fn(params, k, y):
+            # k: int index in [0, K-1], y: shape (batch, data_dim)
+            batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
+            nn1, nn2 = self.model.apply(params, y, batch_k)
+
+            if condition == 'none':
+                return nn1
+
+            elif condition == 'score':
+                logp = target.batch(y)  
+                normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
+                return nn1 + nn2 * normed[:, None]  
+
+            elif condition == 'grad_score':
+                gradp = target.grad_batch(y)  
+                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                return nn1 + nn2 * normed
+
+            else:
+                raise ValueError(f"Unknown condition_term: {condition}")
+
+        return jax.jit(score_fn)
 
     @abstractmethod
     def make_loss(self):
@@ -330,41 +358,6 @@ class DDSAlgorithm(BaseAlgorithm):
         # build loss object
         self.loss_obj = self.make_loss()
 
-    def make_score_fn(self):
-        """
-        Returns: score_fn(params, k, y) -> shape (batch, data_dim)
-        Implements:
-          nn1, nn2 = model.apply(params, y, t=k)
-          log_mu = target_dist.batch(y)
-          grad_log_mu = target_dist.grad_batch(y)
-          according to condition_term: 'none'/'score'/'grad_score'
-        """
-        condition = self.cfg.condition_term
-        target = self.target_dist
-
-        def score_fn(params, k, y):
-            # k: int index in [0, K-1], y: shape (batch, data_dim)
-            batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-            nn1, nn2 = self.model.apply(params, y, batch_k)
-
-            if condition == 'none':
-                return nn1
-
-            elif condition == 'score':
-                logp = target.batch(y)  # shape (batch,)
-                normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
-                return nn1 + nn2 * normed[:, None]  
-
-            elif condition == 'grad_score':
-                gradp = target.grad_batch(y)  # shape (batch, dim)
-                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
-                return nn1 + nn2 * normed
-
-            else:
-                raise ValueError(f"Unknown condition_term: {condition}")
-
-        return jax.jit(score_fn)
-
     def make_loss(self):
         return DDSLoss(add_score=self.cfg.add_score)
 
@@ -485,47 +478,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         # Build the iDEM loss object
         self.loss_obj = self.make_loss()
 
-    def make_score_fn(self):
-        """
-        Returns: score_fn(params, k, y) -> shape (batch, data_dim)
-        Implements the same conditioning options as in DDSAlgorithm:
-          - 'none'
-          - 'score'
-          - 'grad_score'
-        """
-        condition = self.cfg.condition_term
-        target = self.target_dist
-
-        def score_fn(params, t, y):
-            batch_t = t * self.ou.K  # Scale to [0, K]
-            batch_t = jnp.full((y.shape[0],), batch_t, dtype=jnp.float32)
-            nn1, nn2 = self.model.apply(params, y, batch_t)
-
-            if condition == 'none':
-                return nn1
-
-            elif condition == 'score':
-                # use log p(y) as conditioning
-                logp = target.batch(y)  # shape (batch,)
-                normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
-                return nn1 + nn2 * normed[:, None]
-
-            elif condition == 'grad_score':
-                # use ∇ log p(y) as conditioning
-                gradp = target.grad_batch(y)  # shape (batch, data_dim)
-                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
-                return nn1 + nn2 * normed
-
-            else:
-                raise ValueError(f"Unknown condition_term: {condition}")
-
-        return jax.jit(score_fn)
-
     def make_loss(self):
-        """
-        Instantiate the IDEMLoss with the appropriate number of Monte Carlo samples
-        and the noise schedule σ(t).
-        """
         return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
@@ -618,41 +571,6 @@ class PISAlgorithm(BaseAlgorithm):
         self.score_fn = self.make_score_fn()
         self.loss_obj    = self.make_loss()
 
-    def make_score_fn(self):
-        """
-        Returns: score_fn(params, k, y) -> shape (batch, data_dim)
-        Implements:
-          nn1, nn2 = model.apply(params, y, t=k)
-          log_mu = target_dist.batch(y)
-          grad_log_mu = target_dist.grad_batch(y)
-          according to condition_term: 'none'/'score'/'grad_score'
-        """
-        condition = self.cfg.condition_term
-        target = self.target_dist
-
-        def score_fn(params, k, y):
-            # k: int index in [0, K-1], y: shape (batch, data_dim)
-            batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
-            nn1, nn2 = self.model.apply(params, y, batch_k)
-
-            if condition == 'none':
-                return nn1
-
-            elif condition == 'score':
-                logp = target.batch(y)  
-                normed = logp / (jnp.std(logp, axis=0, keepdims=True) + 1e-5)
-                return nn1 + nn2 * normed[:, None]  
-
-            elif condition == 'grad_score':
-                gradp = target.grad_batch(y)  
-                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
-                return nn1 + nn2 * normed
-
-            else:
-                raise ValueError(f"Unknown condition_term: {condition}")
-
-        return jax.jit(score_fn)
-
     def make_loss(self):
         return PISLoss(num_steps= self.cfg.num_steps)
     
@@ -722,3 +640,80 @@ class PISAlgorithm(BaseAlgorithm):
             if_logZ      = False                # Skip logZ estimates
         )
         return trainer.run(rng_key)
+
+
+class ControlledMonteCarloDiffusion(BaseAlgorithm):
+    """
+    Implements both MCD (use_control_in_denominator=False) and
+    CMCD (use_control_in_denominator=True) under the same code path.
+    """
+    def __init__(self, config, use_control_in_denominator: bool):
+        super().__init__(config)
+        if config.network_name == 'mlp':
+            self.model = MLPModel(dim=self.data_dim, T=config.K)
+        elif config.network_name == 'resblock':
+            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
+        else:
+            raise ValueError(f"Unknown model_type: {config.network_name}")
+
+        key = jr.PRNGKey(config.seed)
+        dummy_x = jnp.zeros((config.batch_size, self.data_dim))
+        dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
+        self.params = self.model.init(key, dummy_x, dummy_t)
+
+        self.opt = optax.chain(optax.clip(20.0), optax.adamw(config.lr))
+        self.state = train_state.TrainState.create(
+            apply_fn=self.model.apply,
+            params=self.params,
+            tx=self.opt
+        )
+
+        self.score_fn = self.make_score_fn()
+        self.use_control_in_denominator = use_control_in_denominator # True for CMCD, False for MCD
+        self.loss_obj = self.make_loss()
+
+
+    def make_loss(self):
+        return CMCDLoss(
+            K = self.config.K,
+            use_control_in_denominator = self.use_control_in_denominator
+        )
+
+    def train(self, rng_key):
+        trainer = Trainer(
+            algorithm    = self,
+            process      = object(), # no OU process needed for CMCD/MCD
+            init_dist    = self.init_dist,
+            target_dist  = self.target_dist,
+            score_fn     = self.score_fn,
+            loss_obj     = self.loss_obj,
+            state        = self.state,
+            batch_size   = self.cfg.batch_size,
+            num_steps    = self.cfg.num_steps,
+            if_logZ      = False
+        )
+        return trainer.run(rng_key)
+
+    def sample_controlled(self, params, rng_key, num_samples):
+        key, sub = jr.split(rng_key)
+        x0 = self.init_dist.sample(sub, num_samples) 
+
+        times = jnp.arange(self.config.K, dtype=jnp.float32) / self.config.K
+
+        def body(carry, t):
+            x, key = carry
+            # control and drift
+            u = self.score_fn(params, t, x)  
+            drift = self.loss_obj.sigma2 * self.target_dist.grad_log(x) + u
+            # noise
+            key, sub = jr.split(key)
+            noise = jr.normal(sub, x.shape) * jnp.sqrt(self.loss_obj.delta_t)
+            # state update
+            x = x + drift * self.loss_obj.delta_t + noise
+            return (x, key), None
+        
+        init_carry = (x0, key)
+        (x_final, key_final), _ = jax.lax.scan(body, init_carry, times)
+
+        return x_final
+
