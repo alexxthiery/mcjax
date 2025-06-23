@@ -617,7 +617,6 @@ class PISAlgorithm(BaseAlgorithm):
         self.score_fn = self.make_score_fn()
         self.loss_obj    = self.make_loss()
 
-    
     def make_score_fn(self):
         """
         Returns: score_fn(params, k, y) -> shape (batch, data_dim)
@@ -655,6 +654,54 @@ class PISAlgorithm(BaseAlgorithm):
 
     def make_loss(self):
         return PISLoss(num_steps= self.cfg.num_steps)
+    
+    @partial(jax.jit, static_argnums=(0, 3))
+    def estimate_logZ(self, params, key, num_samples: int):
+        """
+        Importance sampling logZ estimator for PIS:
+        log Z ≈ logmeanexp( - [pathcost + Ψ(x_T) ] )
+        """
+        # sample x0 ∼ ν
+        key, sub = jr.split(key)
+        x = self.init_dist.sample(sub, num_samples)    
+
+        def scan_step(carry, t):
+            x, logw, key = carry
+
+            # control and running‐cost
+            u = self.control_fn(params, t, x)             
+            cost = 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
+
+            # Noise & stochastic‐integral term
+            key, sub = jr.split(key)
+            dW = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
+            stoch = jnp.sum(u * dW, axis=-1)
+
+            #evolve x and accumulate log‐weight
+            x   = x + u * self.delta_t + dW
+            logw = logw - cost - stoch
+
+            return (x, logw, key), None
+
+        times = jnp.arange(self.n_steps, dtype=jnp.float32) * self.delta_t
+        init_carry = (x, jnp.zeros(num_samples), key)
+        (x_final, logw_final, _), _ = jax.lax.scan(
+            scan_step, init_carry, times
+        )
+
+        # terminal cost Ψ = log q_T(x) – log p_target(x)
+        log_qT = self.init_dist.batch(x_final)          
+        log_p  = self.target_dist.batch(x_final)        
+        psi    = log_qT - log_p
+
+        # final log‐weight = –[ running‐cost + stoch‐term + Ψ ]
+        logw_final = logw_final - psi
+
+        # estimate log Z via log‐mean‐exp for numerical stability
+        max_logw  = jnp.max(logw_final)
+        logZ = max_logw + jnp.log(jnp.mean(jnp.exp(logw_final - max_logw)))
+
+        return logZ
 
     def train(self, rng_key):
         """
