@@ -601,6 +601,62 @@ class PISAlgorithm(BaseAlgorithm):
         full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
         return full_seq
 
+    @partial(jax.jit, static_argnums=(0, 3))
+    def estimate_logZ(self, params, key, num_samples: int):
+        """
+        Estimate log normalizing constant using Girsanov's theorem
+        for the controlled forward SDE.
+        """
+        T_total = 1.0  # Total simulation time
+        delta_t = T_total / self.cfg.K
+        
+        key, sub = jr.split(key)
+        x0 = self.init_dist.sample(sub, num_samples)  # (num_samples, dim)
+        
+        # Initialize stochastic integral and running cost
+        stochastic_integral = jnp.zeros(num_samples)
+        running_cost = jnp.zeros(num_samples)
+        
+        def body(carry, k):
+            x_curr, stoch_int, run_cost, key = carry
+            key, sub = jr.split(key)
+            
+            # Get control at current state and time
+            t_val = k * delta_t
+            t_batch = jnp.full((num_samples,), t_val, dtype=jnp.float32)
+            u = self.score_fn(params, t_batch, x_curr)  # (num_samples, dim)
+            
+            # Generate Brownian increment
+            dW = jr.normal(sub, shape=x_curr.shape) * jnp.sqrt(delta_t)
+            
+            # Update state
+            x_next = x_curr + u * delta_t + dW
+            
+            # Update stochastic integral: ∫ u dW
+            stoch_int_update = jnp.sum(u * dW, axis=-1)
+            new_stoch_int = stoch_int + stoch_int_update
+            
+            # Update running cost: 0.5 ∫ ||u||² dt
+            run_cost_update = 0.5 * jnp.sum(u**2, axis=-1) * delta_t
+            new_run_cost = run_cost + run_cost_update
+            
+            return (x_next, new_stoch_int, new_run_cost, key), None
+        
+        init_carry = (x0, stochastic_integral, running_cost, key)
+        (xT, stoch_int_final, run_cost_final, _), _ = jax.lax.scan(
+            body,
+            init_carry,
+            jnp.arange(self.cfg.K)
+        )
+        
+        # Compute terminal cost: log p_target(xT)
+        log_p_target = self.target_dist.batch(xT)
+        
+        # Compute log reference density (initial distribution)
+        log_ref = self.init_dist.batch(x0)
+        logZ = -stoch_int_final - run_cost_final + log_p_target - log_ref
+        
+        return logZ
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
