@@ -563,7 +563,7 @@ class PISAlgorithm(BaseAlgorithm):
         self.loss_obj    = self.make_loss()
 
     def make_loss(self):
-        return PISLoss(num_steps= self.cfg.num_steps)
+        return PISLoss()
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
@@ -599,7 +599,6 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
 
     def make_loss(self):
         return CMCDLoss(
-            K = self.cfg.K,
             use_control_in_denominator = self.use_control_in_denominator
         )
 

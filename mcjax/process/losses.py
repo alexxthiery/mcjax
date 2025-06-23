@@ -167,8 +167,6 @@ class PISLoss(BaseLoss):
         self.delta_t = 1/self.process.K
         self.n_steps = self.process.K      # align with OU steps
 
-
-    @partial(jax.jit, static_argnums=(0,3))
     def __call__(self, params, key, init_dist, target_dist, score_fn, batch_size, **kwargs):
         # forward controlled SDE from x0 ~ ν
         key, sub = jr.split(key)
@@ -197,7 +195,7 @@ class PISLoss(BaseLoss):
 
 
 class CMCDLoss(BaseLoss):
-    def __init__(self, delta_t: float, use_control_in_denominator: bool):
+    def __init__(self,use_control_in_denominator):
         self.delta_t = 1/self.process.K
         self.n_steps = self.process.K
         self.use_ctrl_den = use_control_in_denominator
