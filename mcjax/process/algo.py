@@ -126,12 +126,25 @@ class BaseAlgorithm(ABC):
         """
         pass
 
-    @abstractmethod
+    @partial(jax.jit, static_argnums=(0,))
     def train(self, rng_key):
         """
-        Runs the training loop, returns final params, train‐loss history, maybe logZ stats.
+        Runs the outer training loop using the generic Trainer.
+        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
         """
-        pass
+        trainer = Trainer(
+            algorithm    = self,
+            process      = self.ou,                
+            init_dist    = self.init_dist,
+            target_dist  = self.target_dist,
+            score_fn     = self.score_fn,     
+            loss_obj     = self.loss_obj,
+            state        = self.state,
+            batch_size   = self.cfg.batch_size,
+            num_steps    = self.cfg.num_steps,
+            if_logZ      = self.cfg.if_logZ              
+        )
+        return trainer.run(rng_key)
 
     def sample(self, params, rng_key, num_samples: int):
         """
@@ -344,10 +357,7 @@ class DDSAlgorithm(BaseAlgorithm):
         # optimizer (Adam)
         # self.opt = optax.adam(config.lr)
         # add gradient clipping
-        optax.chain(
-            optax.clip(20.0),
-            optax.adamw(config.lr)
-        )
+        optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
         )
@@ -361,24 +371,6 @@ class DDSAlgorithm(BaseAlgorithm):
     def make_loss(self):
         return DDSLoss(add_score=self.cfg.add_score)
 
-    def train(self, rng_key):
-        """
-        Run the training loop (jax.lax.scan).
-        Returns (final_params, losses, maybe logZs).
-        """
-        trainer = Trainer(
-            algorithm=self,
-            process=self.ou,
-            init_dist=self.init_dist,
-            target_dist=self.target_dist,
-            score_fn=self.score_fn,
-            loss_obj=self.loss_obj,
-            state=self.state,
-            batch_size=self.cfg.batch_size,
-            num_steps=self.cfg.num_steps,
-            if_logZ=self.cfg.if_logZ
-        )
-        return trainer.run(rng_key)
 
 class IDEMAlgorithm(BaseAlgorithm):
     """
@@ -444,8 +436,7 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Set up optimizer (Adam) and Flax train state
-        self.opt = optax.chain(optax.adam(config.lr),
-                                optax.clip(50.0))
+        optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=initial_params,
@@ -482,6 +473,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
+    # override train function
     @partial(jax.jit, static_argnums=(0,))
     def train(self, rng_key):
         inner_trainer = InnerTrainer(
@@ -543,7 +535,6 @@ class IDEMAlgorithm(BaseAlgorithm):
         jax.debug.print("Training complete.")
         return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size
 
-
 class PISAlgorithm(BaseAlgorithm):
     def __init__(self, config):
         super().__init__(config)
@@ -561,7 +552,7 @@ class PISAlgorithm(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(sub, dummy_x, dummy_t)
 
-        self.opt = optax.adamw(config.lr)
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
@@ -573,73 +564,6 @@ class PISAlgorithm(BaseAlgorithm):
 
     def make_loss(self):
         return PISLoss(num_steps= self.cfg.num_steps)
-    
-    @partial(jax.jit, static_argnums=(0, 3))
-    def estimate_logZ(self, params, key, num_samples: int):
-        """
-        Importance sampling logZ estimator for PIS:
-        log Z ≈ logmeanexp( - [pathcost + Ψ(x_T) ] )
-        """
-        # sample x0 ∼ ν
-        key, sub = jr.split(key)
-        x = self.init_dist.sample(sub, num_samples)    
-
-        def scan_step(carry, t):
-            x, logw, key = carry
-
-            # control and running‐cost
-            u = self.score_fn(params, t, x)             
-            cost = 0.5 * jnp.sum(u**2, axis=-1) / self.cfg.K
-
-            # Noise & stochastic‐integral term
-            key, sub = jr.split(key)
-            dW = jr.normal(sub, x.shape) * jnp.sqrt(1/ self.cfg.K)
-            stoch = jnp.sum(u * dW, axis=-1)
-
-            #evolve x and accumulate log‐weight
-            x   = x + u / self.cfg.K + dW
-            logw = logw - cost - stoch
-
-            return (x, logw, key), None
-
-        times = jnp.arange(self.cfg.K, dtype=jnp.float32) / self.cfg.K  # times in [0, 1]
-        init_carry = (x, jnp.zeros(num_samples), key)
-        (x_final, logw_final, _), _ = jax.lax.scan(
-            scan_step, init_carry, times
-        )
-
-        # terminal cost Ψ = log q_T(x) – log p_target(x)
-        log_qT = self.init_dist.batch(x_final)          
-        log_p  = self.target_dist.batch(x_final)        
-        psi    = log_qT - log_p
-
-        # final log‐weight = –[ running‐cost + stoch‐term + Ψ ]
-        logw_final = logw_final - psi
-
-        # estimate log Z via log‐mean‐exp for numerical stability
-        max_logw  = jnp.max(logw_final)
-        logZ = max_logw + jnp.log(jnp.mean(jnp.exp(logw_final - max_logw)))
-
-        return logZ
-
-    def train(self, rng_key):
-        """
-        Runs the outer training loop using the generic Trainer.
-        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
-        """
-        trainer = Trainer(
-            algorithm    = self,
-            process      = None,                # OU process not used in PIS forward pass
-            init_dist    = self.init_dist,
-            target_dist  = self.target_dist,
-            score_fn     = self.score_fn,     
-            loss_obj     = self.loss_obj,
-            state        = self.state,
-            batch_size   = self.cfg.batch_size,
-            num_steps    = self.cfg.num_steps,
-            if_logZ      = False                # Skip logZ estimates
-        )
-        return trainer.run(rng_key)
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
@@ -661,7 +585,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(key, dummy_x, dummy_t)
 
-        self.opt = optax.chain(optax.clip(20.0), optax.adamw(config.lr))
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=self.params,
@@ -678,42 +602,4 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
             K = self.cfg.K,
             use_control_in_denominator = self.use_control_in_denominator
         )
-
-    def train(self, rng_key):
-        trainer = Trainer(
-            algorithm    = self,
-            process      = object(), # no OU process needed for CMCD/MCD
-            init_dist    = self.init_dist,
-            target_dist  = self.target_dist,
-            score_fn     = self.score_fn,
-            loss_obj     = self.loss_obj,
-            state        = self.state,
-            batch_size   = self.cfg.batch_size,
-            num_steps    = self.cfg.num_steps,
-            if_logZ      = False
-        )
-        return trainer.run(rng_key)
-
-    def sample_controlled(self, params, rng_key, num_samples):
-        key, sub = jr.split(rng_key)
-        x0 = self.init_dist.sample(sub, num_samples) 
-
-        times = jnp.arange(self.cfg.K, dtype=jnp.float32) / self.cfg.K
-
-        def body(carry, t):
-            x, key = carry
-            # control and drift
-            u = self.score_fn(params, t, x)  
-            drift = self.loss_obj.sigma2 * self.target_dist.grad_log(x) + u
-            # noise
-            key, sub = jr.split(key)
-            noise = jr.normal(sub, x.shape) * jnp.sqrt(self.loss_obj.delta_t)
-            # state update
-            x = x + drift * self.loss_obj.delta_t + noise
-            return (x, key), None
-        
-        init_carry = (x0, key)
-        (x_final, key_final), _ = jax.lax.scan(body, init_carry, times)
-
-        return x_final
 

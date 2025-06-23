@@ -253,6 +253,6 @@ class CMCDLoss:
             x = mu_fwd + noise
 
         # end‐point cost
-        log_ratio = log_ratio + init_dist.log_prob(x) - target_dist.log_prob(x)
+        log_ratio = log_ratio + init_dist.batch(x) - target_dist.batch(x)
 
         return jnp.mean(-log_ratio)
