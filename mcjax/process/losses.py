@@ -216,7 +216,6 @@ class CMCDLoss:
         self.sigma2 = 2.0  
         self.add_score = False # MCD does not use score_fn & add_score
 
-    @partial(jax.jit, static_argnums=(0,3))
     def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs ):
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)
