@@ -227,12 +227,12 @@ class CMCDLoss:
             u = score_fn(params, t, x)
 
             # forward transition kernel log‐density
-            mu_fwd = x + (self.sigma2 * target_dist.grad_log(x) + u) * self.delta_t
+            mu_fwd = x + (self.sigma2 * target_dist.grad_batch(x) + u) * self.delta_t
             log_p_fwd = logpdf(
                 x, loc=mu_fwd, scale=jnp.sqrt(2*self.sigma2*self.delta_t)
             ).sum(-1)
 
-            grad_term = self.sigma2 * target_dist.grad_log(x)
+            grad_term = self.sigma2 * target_dist.grad_batch(x)
             b = jax.lax.cond(
                 self.use_ctrl_den,
                 lambda _: grad_term - u,   # CMCD
@@ -241,7 +241,7 @@ class CMCDLoss:
             )
 
             mu_bwd = x + b * self.delta_t
-            log_p_bwd = jax.scipy.stats.norm.logpdf(
+            log_p_bwd = logpdf(
                 x, loc=mu_bwd, scale=jnp.sqrt(2*self.sigma2*self.delta_t)
             ).sum(-1)
 
