@@ -669,7 +669,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         )
 
         self.score_fn = self.make_score_fn()
-        self.use_control_in_denominator = self.config.use_control_in_denominator # True for CMCD, False for MCD
+        self.use_control_in_denominator = config.use_control_in_denominator # True for CMCD, False for MCD
         self.loss_obj = self.make_loss()
 
 
