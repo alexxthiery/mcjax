@@ -4,6 +4,7 @@ import jax.random as jr
 import jax.numpy as jnp
 from functools import partial
 from jax.scipy.special import logsumexp
+from jax.scipy.stats.norm import logpdf
 
 class BaseLoss(ABC):
     """Abstract interface for any training loss."""
@@ -168,17 +169,15 @@ class PISLoss(BaseLoss):
         self.add_score = False # PIS does not use score_fn & add_score
 
     def __call__(self, params, key, process, init_dist, target_dist, control_fn, batch_size, **kwargs):
-        # sample x₀
         key, sub = jr.split(key)
-        x = init_dist.sample(sub, batch_size)  # shape (batch, dim)
+        x = init_dist.sample(sub, batch_size)  
 
         # forward Euler–Maruyama with control
         running_cost = jnp.zeros(batch_size)
         
-        # Rewrite the for loop above by using jax.lax.scan
         def scan_step(carry, t):
             x, running_cost, key = carry
-            u = control_fn(params, t, x)                 # shape (batch, dim)
+            u = control_fn(params, t, x)                 
             running_cost += 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
 
             key, sub = jr.split(key)
@@ -196,9 +195,64 @@ class PISLoss(BaseLoss):
 
 
         # terminal cost Ψ = log q_T(x) – log p_target(x)
-        log_qT = init_dist.batch(x)                     # uncontrolled log‐density
-        log_p  = target_dist.batch(x)                   # unnormalized target log‐density
+        log_qT = init_dist.batch(x)                     
+        log_p  = target_dist.batch(x)                   
         psi    = log_qT - log_p
 
-        # 4) return mean loss
+        # return mean loss
         return jnp.mean(running_cost + psi)
+
+
+class CMCDLoss:
+    """
+    Implements the time-discretized loss for CMCD vs MCD. (Eq (24) in the paper)
+    If use_control_in_denominator=False, control terms in the denominator log-ratio
+    are zero, recovering the MCD objective.
+    """
+    def __init__(self, K: int, use_control_in_denominator: bool):
+        self.n_steps = K
+        self.delta_t = 1/self.n_steps
+        self.use_ctrl_den = use_control_in_denominator
+        self.sigma2 = 2.0  
+
+    @partial(jax.jit, static_argnums=(0,3))
+    def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
+        key, sub = jr.split(key)
+        x = init_dist.sample(sub, batch_size)
+
+        # accumulate log‐ratio over K steps
+        log_ratio = jnp.zeros(batch_size)
+        for i in range(self.n_steps):
+            t = i * self.delta_t
+            u = control_fn(params, t, x)
+
+            # forward transition kernel log‐density
+            mu_fwd = x + (self.sigma2 * target_dist.grad_log(x) + u) * self.delta_t
+            log_p_fwd = logpdf(
+                x, loc=mu_fwd, scale=jnp.sqrt(2*self.sigma2*self.delta_t)
+            ).sum(-1)
+
+            grad_term = self.sigma2 * target_dist.grad_log(x)
+            b = jax.lax.cond(
+                self.use_ctrl_den,
+                lambda _: grad_term - u,   # CMCD
+                lambda _: grad_term,       # MCD
+                operand=None
+            )
+
+            mu_bwd = x + b * self.delta_t
+            log_p_bwd = jax.scipy.stats.norm.logpdf(
+                x, loc=mu_bwd, scale=jnp.sqrt(2*self.sigma2*self.delta_t)
+            ).sum(-1)
+
+            log_ratio = log_ratio + (log_p_fwd - log_p_bwd)
+
+            # step forward
+            key, sub = jr.split(key)
+            noise = jr.normal(sub, x.shape) * jnp.sqrt(self.delta_t)
+            x = mu_fwd + noise
+
+        # end‐point cost
+        log_ratio = log_ratio + init_dist.log_prob(x) - target_dist.log_prob(x)
+
+        return jnp.mean(-log_ratio)

@@ -3,10 +3,10 @@
 # ----------- Parameter settings -----------
 ############################################
 
-algo='idem' 
+algo='mcd' 
 target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model； 'funnel': 2-d Funnel distribution
 network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
-condition_term='none' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
+condition_term='score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
 add_score=true # Add score term to the loss function
 variable_ts=true # Use variable time steps
 K=2000 # Number of steps in the process
@@ -25,6 +25,8 @@ buffer_size=5000 # Buffer size for the training data in IDEM algorithm
 inner_iters=2000 # Number of inner steps for the IDEM algorithm
 outer_iters=200 # Number of outer steps for the IDEM algorithm
 num_samples_per_outer=1000 # Number of samples per outer step for the IDEM algorithm
+
+use_control_in_denominator=false # True for CMCD, False for MCD
 
 
 python main.py \
@@ -48,5 +50,6 @@ python main.py \
     --buffer_size $buffer_size \
     --inner_iters $inner_iters \
     --outer_iters $outer_iters \
-    --num_samples_per_outer $num_samples_per_outer
+    --num_samples_per_outer $num_samples_per_outer \
+    --use_control_in_denominator $use_control_in_denominator
   

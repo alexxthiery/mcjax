@@ -13,7 +13,7 @@ sys.path.append('../../')
 import time
 from scipy.stats import gaussian_kde
 
-from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm
+from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm, ControlledMonteCarloDiffusion
 from metrics import MMD_squared,two_wasserstein
 
 
@@ -45,6 +45,7 @@ def parse_args():
     parser.add_argument("--inner_iters", type=int, default=100)
     parser.add_argument("--outer_iters", type=int, default=100)
     parser.add_argument("--num_samples_per_outer", type=int, default=1000)
+    parser.add_argument("--use_control_in_denominator", type=str2bool, default=False)
     return parser.parse_args()
 
 
@@ -61,6 +62,8 @@ def main():
         AlgoClass = PISAlgorithm
     elif args.algo == "idem":
         AlgoClass = IDEMAlgorithm
+    elif args.algo == "mcd":
+        AlgoClass = ControlledMonteCarloDiffusion
     else:
         raise NotImplementedError(f"Algorithm {args.algo} not supported yet.")
 
