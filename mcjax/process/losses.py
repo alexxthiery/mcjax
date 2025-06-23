@@ -168,7 +168,7 @@ class PISLoss(BaseLoss):
         self.delta_t = 1 / num_steps
         self.add_score = False # PIS does not use score_fn & add_score
 
-    def __call__(self, params, key, process, init_dist, target_dist, control_fn, batch_size, **kwargs):
+    def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)  
 
@@ -177,7 +177,7 @@ class PISLoss(BaseLoss):
         
         def scan_step(carry, t):
             x, running_cost, key = carry
-            u = control_fn(params, t, x)                 
+            u = score_fn(params, t, x)                 
             running_cost += 0.5 * jnp.sum(u**2, axis=-1) * self.delta_t
 
             key, sub = jr.split(key)
@@ -214,9 +214,10 @@ class CMCDLoss:
         self.delta_t = 1/self.n_steps
         self.use_ctrl_den = use_control_in_denominator
         self.sigma2 = 2.0  
+        self.add_score = False # MCD does not use score_fn & add_score
 
     @partial(jax.jit, static_argnums=(0,3))
-    def __call__(self, params, key, init_dist, target_dist, control_fn, batch_size):
+    def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs ):
         key, sub = jr.split(key)
         x = init_dist.sample(sub, batch_size)
 
@@ -224,7 +225,7 @@ class CMCDLoss:
         log_ratio = jnp.zeros(batch_size)
         for i in range(self.n_steps):
             t = i * self.delta_t
-            u = control_fn(params, t, x)
+            u = score_fn(params, t, x)
 
             # forward transition kernel log‐density
             mu_fwd = x + (self.sigma2 * target_dist.grad_log(x) + u) * self.delta_t
