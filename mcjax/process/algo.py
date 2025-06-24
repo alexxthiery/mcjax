@@ -111,7 +111,8 @@ class BaseAlgorithm(ABC):
 
             elif condition == 'grad_score':
                 gradp = target.grad_batch(y)  
-                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                # normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                normed = gradp # test without batch normalization
                 return nn1 + nn2 * normed
 
             else:
