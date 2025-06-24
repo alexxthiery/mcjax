@@ -622,9 +622,9 @@ class PISAlgorithm(BaseAlgorithm):
             key, sub = jr.split(key)
             
             # Get control at current state and time
-            t_val = k * delta_t
+            t_val = k 
             t_batch = jnp.full((num_samples,), t_val, dtype=jnp.float32)
-            u = self.score_fn(params, t_batch, x_curr)  # (num_samples, dim)
+            u = self.score_fn(params, t_batch, x_curr) 
             
             # Generate Brownian increment
             dW = jr.normal(sub, shape=x_curr.shape) * jnp.sqrt(delta_t)
@@ -636,7 +636,6 @@ class PISAlgorithm(BaseAlgorithm):
             stoch_int_update = jnp.sum(u * dW, axis=-1)
             new_stoch_int = stoch_int + stoch_int_update
             
-            # Update running cost: 0.5 ∫ ||u||² dt
             run_cost_update = 0.5 * jnp.sum(u**2, axis=-1) * delta_t
             new_run_cost = run_cost + run_cost_update
             
