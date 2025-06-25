@@ -11,6 +11,7 @@ from scipy.stats import gaussian_kde
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
 from flax import struct
+from jax.scipy.special import logsumexp
 
 from models import MLPModel, ResBlockModel
 from ou import OU
@@ -693,4 +694,67 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
             use_control_in_denominator = self.use_control_in_denominator,
             add_score=self.cfg.add_score
         )
+    
+    def sample(self, params, rng_key, num_samples):
+        """
+        Euler-Maruyama sampler corresponding to CMCD/MCD forward proposal.
+        """
+        @jax.jit
+        def gen(key):
+            key, sub = jr.split(key)
+            x = self.init_dist.sample(sub, num_samples)
+            delta_t = 1.0 / self.ou.K
+            for i in range(self.ou.K):
+                t = i * delta_t
+                u = self.control_fn(params, t, x)
+                # drift: always include target score
+                gradp = self.target_dist.grad_batch(x)
+                drift = self.ou.sigma**2 * gradp + u
+                key, sub = jr.split(key)
+                noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
+                x = drift * delta_t + noise + x
+            return x
+        return gen(rng_key)
 
+    @partial(jax.jit, static_argnums=(0, 3))
+    def estimate_logZ(self, params, key, num_samples: int):
+        """
+        Use importance sampling with the log-ratio from CMCDLoss.
+        logZ ≈ logmeanexp(log_ratio)
+        """
+        # Reuse the same scan as in CMCDLoss but return all log_ratios
+        key, sub = jr.split(key)
+        x = self.init_dist.sample(sub, num_samples)
+        log_ratio = jnp.zeros(num_samples)
+        delta_t = 1.0 / self.ou.K
+        def body(carry, t):
+            x, lr, key = carry
+            u = self.control_fn(params, t, x)
+            gradp = self.target_dist.grad_batch(x)
+            mu_fwd = x + (self.ou.sigma**2 * gradp + u) * delta_t
+            factor = -1.0 if self.loss_obj.use_ctrl_den else 0.0
+            mu_bwd = x + (self.ou.sigma**2 * gradp + factor * u) * delta_t
+            # log p forward/backward
+            def log_gauss(x, mu):
+                var = 2 * (self.ou.sigma**2) * delta_t
+                D = x.shape[-1]
+                norm = -0.5 * (D * jnp.log(2*jnp.pi*var))
+                quad = -0.5 * jnp.sum((x - mu)**2, axis=-1) / var
+                return norm + quad
+            log_pfwd = log_gauss(x, mu_fwd)
+            log_pbwd = log_gauss(x, mu_bwd)
+            lr = lr + (log_pfwd - log_pbwd)
+            key, sub = jr.split(key)
+            noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
+            x = mu_fwd + noise
+            return (x, lr, key), None
+        times = jnp.arange(self.ou.K, dtype=jnp.float32) * (1.0 / self.ou.K)
+        (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
+        # add endpoint
+        log_qT = self.ou.log_marginal(xT, self.ou.K)
+        log_p  = self.target_dist.batch(xT)
+        log_ratio = log_ratio + log_qT - log_p
+        # estimate logZ
+        M = log_ratio.shape[0]
+        sum_log = logsumexp(log_ratio)        
+        return sum_log - jnp.log(M)
