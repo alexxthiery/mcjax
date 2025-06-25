@@ -706,7 +706,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
             delta_t = 1.0 / self.ou.K
             for i in range(self.ou.K):
                 t = i * delta_t
-                u = self.control_fn(params, t, x)
+                u = self.score_fn(params, t, x)
                 # drift: always include target score
                 gradp = self.target_dist.grad_batch(x)
                 drift = self.ou.sigma**2 * gradp + u
@@ -729,7 +729,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         delta_t = 1.0 / self.ou.K
         def body(carry, t):
             x, lr, key = carry
-            u = self.control_fn(params, t, x)
+            u = self.score_fn(params, t, x)
             gradp = self.target_dist.grad_batch(x)
             mu_fwd = x + (self.ou.sigma**2 * gradp + u) * delta_t
             factor = -1.0 if self.loss_obj.use_ctrl_den else 0.0
