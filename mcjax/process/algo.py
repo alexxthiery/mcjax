@@ -69,7 +69,7 @@ class BaseAlgorithm(ABC):
 
         # Build the reference initial distribution
         self.init_dist = IsotropicGauss(
-            mu=jnp.zeros(self.data_dim), log_var=0.0
+            mu=jnp.zeros(self.data_dim), log_var=1.0
         )
         
         # create timesteps / beta / alpha schedule
