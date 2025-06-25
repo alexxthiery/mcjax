@@ -581,8 +581,7 @@ class PISAlgorithm(BaseAlgorithm):
             key, sub = jr.split(key)
             
             # Get control at current state and time
-            t_val = k * delta_t
-            t_batch = jnp.full((num_samples,), t_val, dtype=jnp.float32)
+            t_batch = jnp.full((num_samples,), k, dtype=jnp.float32)
             u = self.score_fn(params, t_batch, x_curr)  
             
             # Euler-Maruyama step
@@ -623,8 +622,7 @@ class PISAlgorithm(BaseAlgorithm):
             key, sub = jr.split(key)
             
             # Get control at current state and time
-            t_val = k 
-            t_batch = jnp.full((num_samples,), t_val, dtype=jnp.float32)
+            t_batch = jnp.full((num_samples,), k, dtype=jnp.float32)
             u = self.score_fn(params, t_batch, x_curr) 
             
             # Generate Brownian increment
@@ -662,7 +660,7 @@ class PISAlgorithm(BaseAlgorithm):
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
     """
     Implements both MCD (use_control_in_denominator=False) and
-    CMCD (use_control_in_denominator=True) under the same code path.
+    CMCD (use_control_in_denominator=True) 
     """
     def __init__(self, config):
         super().__init__(config)
