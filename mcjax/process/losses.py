@@ -188,9 +188,9 @@ class PISLoss(BaseLoss):
         times = jnp.arange(self.n_steps, dtype=jnp.float32)
         (xT, running, _), _ = jax.lax.scan(body, (x, running_cost, key), times)
 
-        # terminal cost Ψ = log q_T(x_T) - log p(x_T)
+        # terminal cost Ψ = log q_T(x_T) - log p(x_T) under pure Brownian motion
         T_total = 1.0  
-        var_total = 1.0 + T_total  # Initial variance (1) + Brownian variance (T)
+        var_total = 1.0 + T_total  # Total variance = 1+T (pure Brownian motion)
         d = xT.shape[-1]
         log_qT = -0.5 * d * jnp.log(2 * jnp.pi * var_total) \
                 - 0.5 * jnp.sum(xT**2, axis=-1) / var_total

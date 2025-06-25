@@ -4,7 +4,7 @@
 ############################################
 
 algo='pis' 
-target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model； 'funnel': 2-d Funnel distribution
+target_dist='funnel' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model； 'funnel': 2-d Funnel distribution
 network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
 condition_term='score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
 add_score=true # Add score term to the loss function
@@ -13,7 +13,7 @@ K=1000 # Number of steps in the process
 sigma=1.0 # Noise scale for the backward process
 lr=0.0005 # Learning rate
 batch_size=128 # Batch size
-num_steps=200 # Number of steps for training
+num_steps=2000 # Number of steps for training
 if_logZ=true # calculate logZ during training
 seed=42 # Random seed for reproducibility
 if_train=true # Whether to train the model
