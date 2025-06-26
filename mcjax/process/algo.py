@@ -359,7 +359,7 @@ class DDSAlgorithm(BaseAlgorithm):
         # optimizer (Adam)
         # self.opt = optax.adam(config.lr)
         # add gradient clipping
-        optax.chain(optax.clip(50.0), optax.adamw(config.lr))
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
         )
@@ -612,7 +612,7 @@ class PISAlgorithm(BaseAlgorithm):
         delta_t = T_total / self.cfg.K
         
         key, sub = jr.split(key)
-        x0 = self.init_dist.sample(sub, num_samples)  # (num_samples, dim)
+        x0 = self.init_dist.sample(sub, num_samples) 
         
         # Initialize stochastic integral and running cost
         stochastic_integral = jnp.zeros(num_samples)
