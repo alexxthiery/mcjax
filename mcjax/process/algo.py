@@ -438,7 +438,7 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Set up optimizer (Adam) and Flax train state
-        optax.chain(optax.clip(50.0), optax.adamw(config.lr))
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=initial_params,
