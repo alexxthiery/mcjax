@@ -277,7 +277,7 @@ class CMCDLoss(BaseLoss):
         trans_sum = jnp.sum(trans_terms, axis=0)  # Sum over time
         
         # Endpoint terms
-        log_pT = target_dist.batch(xK, n_steps)  # π_T(x_T)
+        log_pT = target_dist.batch(xK)  # π_T(x_T)
         log_ratio = log_p0 - log_pT + trans_sum
         
         return jnp.mean(-log_ratio)
