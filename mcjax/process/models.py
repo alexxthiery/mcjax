@@ -135,7 +135,7 @@ class ResBlockModel(nn.Module, BaseModel):
         x_embed = nn.LayerNorm()(x_embed);  x_embed = nn.relu(x_embed)
 
         # combine with x
-        h = jnp.concatenate([x, t_embed, x_embed], axis=-1)
+        h = jnp.concatenate([x, t_embed, x_embed.reshape(x.shape[0],-1)], axis=-1)
 
         h = nn.Dense(256)(h)         # (batch, 256)
         h = nn.LayerNorm()(h)        
@@ -153,7 +153,7 @@ class ResBlockModel(nn.Module, BaseModel):
                            bias_init=nn.initializers.zeros)(h)
 
         # second branch (just a tiny MLP on t)
-        t_proj2 = t[:, None]*freqs[None, :]
+        t_proj2 = t[:, None]*freqs_t[None, :]
         t_emb2 = nn.Dense(128)(jnp.concatenate([jnp.sin(t_proj2), jnp.cos(t_proj2)], axis=-1))
         t_emb2 = nn.LayerNorm()(t_emb2);  t_emb2 = nn.relu(t_emb2)
         nn2_out = nn.Dense(self.dim,
