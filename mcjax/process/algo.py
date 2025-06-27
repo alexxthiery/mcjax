@@ -275,7 +275,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/density_evolution.mp4'
+            fname = f'{self.cfg.results_dir}/density_evolution_{self.cfg.algo}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
@@ -326,7 +326,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/sample_movement.mp4'
+            fname = f'{self.cfg.results_dir}/sample_movement_{self.cfg.algo}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
