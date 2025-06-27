@@ -113,16 +113,29 @@ class ResBlockModel(nn.Module, BaseModel):
     def __call__(self, x, t):
         # build time‐emb similarly to MLPModel...
         half_dim = 32
-        emb_scale = jnp.log(10000.0)/(half_dim - 1)
-        freqs = jnp.exp(jnp.arange(half_dim) * -emb_scale)
+        emb_scale_t = jnp.log(10000.0)/(half_dim - 1)
+        freqs_t = jnp.exp(jnp.arange(half_dim) * -emb_scale_t)
+        omega_min = 2*jnp.pi / 100.0    # ≈ 0.0628
+        omega_max = 2*jnp.pi           # ≈ 6.283
 
-        t_proj = t[:, None] * freqs[None, :]
+        emb_scale_x = jnp.log(omega_max/omega_min) / (half_dim - 1)
+        # roughly log(100) / 31  ≈ 4.605 / 31 ≈ 0.1486
+        freqs_x = jnp.exp(jnp.arange(half_dim) * -emb_scale_x)
+
+        # time embedding
+        t_proj = t[:, None] * freqs_t[None, :]
         t_emb  = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)
         t_embed = nn.Dense(128)(t_emb)
         t_embed = nn.LayerNorm()(t_embed);  t_embed = nn.relu(t_embed)
 
+        # x embedding
+        x_proj = x[:, None] * freqs_x[None, :]
+        x_emb  = jnp.concatenate([jnp.sin(x_proj), jnp.cos(x_proj)], axis=-1)
+        x_embed = nn.Dense(128)(x_emb)  
+        x_embed = nn.LayerNorm()(x_embed);  x_embed = nn.relu(x_embed)
+
         # combine with x
-        h = jnp.concatenate([x, t_embed], axis=-1)
+        h = jnp.concatenate([x, t_embed, x_embed], axis=-1)
 
         h = nn.Dense(256)(h)         # (batch, 256)
         h = nn.LayerNorm()(h)        
