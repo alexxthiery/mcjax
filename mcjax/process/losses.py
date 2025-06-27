@@ -199,67 +199,93 @@ class PISLoss(BaseLoss):
 
         return jnp.mean(running + psi)
 
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+from functools import partial
+
 class CMCDLoss(BaseLoss):
-    def __init__(self,use_control_in_denominator, add_score: bool = False):
+    def __init__(self, use_control_in_denominator: bool, add_score: bool = False):
         self.use_ctrl_den = use_control_in_denominator
-        self.add_score = add_score  # NO NEED, just to align with other losses
+        self.add_score = add_score
 
     def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
-        self.delta_t = 1/process.K
-        self.n_steps = process.K
-        self.sigma2 = process.sigma**2
-
-        key, sub = jr.split(key)
-        x = init_dist.sample(sub, batch_size)
-
-        log_ratio = jnp.zeros(batch_size)
-        def body(carry, t):
-            x, lr, key = carry
+        delta_t = 1 / process.K
+        n_steps = process.K
+        sigma2 = process.sigma**2
+        
+        # Sample initial state
+        key, subkey = jr.split(key)
+        x0 = init_dist.sample(subkey, batch_size)
+        log_p0 = init_dist.batch(x0)  # π₀(x₀)
+        
+        # Forward pass to generate trajectory
+        def forward_step(carry, t):
+            x, key = carry
+            key, subkey = jr.split(key)
             u = score_fn(params, t, x)
-
-            # forward mean μ_fwd = x + (σ² ∇log p + u) dt
-            gradp = target_dist.grad_batch(x)
-            mu_fwd = x + (self.sigma2 * gradp + u)*self.delta_t
-
-            # backward mean μ_bwd depends on flag
-            gradp = target_dist.grad_batch(x)
+            gradp = target_dist.grad_batch(x, t)  # Time-dependent score
+            
+            # Forward transition
+            noise = jr.normal(subkey, x.shape) * jnp.sqrt(2 * sigma2 * delta_t)
+            x_next = x + (sigma2 * gradp + u) * delta_t + noise
+            return (x_next, key), (x, x_next, u, gradp)
+        
+        times = jnp.arange(n_steps)
+        (xK, _), forward_vals = jax.lax.scan(
+            forward_step, (x0, key), times
+        )
+        x_t, x_tp1, u_t, gradp_t = forward_vals
+        # Include initial state in trajectory
+        x_traj = jnp.concatenate([x0[None], x_t])
+        
+        # Compute final control and gradp
+        uK = score_fn(params, n_steps, xK)
+        gradpK = target_dist.grad_batch(xK, n_steps)
+        
+        # Build full trajectory arrays
+        states = jnp.concatenate([x_traj, xK[None]], axis=0)  # [x0, x1, ..., xK]
+        controls = jnp.concatenate([u_t, uK[None]], axis=0)  # [u0, u1, ..., uK]
+        gradps = jnp.concatenate([gradp_t, gradpK[None]], axis=0)  # [gradp0, ..., gradpK]
+        
+        # Compute transition terms
+        def compute_transition_term(i):
+            x_cur = states[i]
+            x_next = states[i+1]
+            u_cur = controls[i]
+            u_next = controls[i+1]
+            gradp_cur = gradps[i]
+            gradp_next = gradps[i+1]
+            
+            # Forward transition density
+            mu_fwd = x_cur + (sigma2 * gradp_cur + u_cur) * delta_t
+            log_pfwd = self._log_gauss(x_next, mu_fwd, 2*sigma2*delta_t)
+            
+            # Backward transition density
             factor = jax.lax.cond(
                 self.use_ctrl_den,
-                lambda _: -1.0, # CMCD
-                lambda _: 0.0,  # MCD
-                operand=None
+                lambda: -1.0,
+                lambda: 0.0
             )
-            mu_bwd = x + (self.sigma2 * gradp + factor * u)*self.delta_t
-
-            # log‐density of Gaussian kernels N(x ; μ_*, 2σ²Δt)
-            def log_gauss(x, mu):
-                var = 2*self.sigma2*self.delta_t
-                D   = x.shape[-1]
-                norm = -0.5*(D*jnp.log(2*jnp.pi*var))
-                quad = -0.5*jnp.sum((x-mu)**2, axis=-1)/var
-                return norm + quad
-
-            log_pfwd = log_gauss(x, mu_fwd)
-            log_pbwd = log_gauss(x, mu_bwd)
-            lr = lr + (log_pfwd - log_pbwd)
-
-            # step forward
-            key, sub = jr.split(key)
-            noise = jr.normal(sub, x.shape)*jnp.sqrt(self.delta_t)
-            x = mu_fwd + noise
-            return (x, lr, key), None
-
-        times = jnp.arange(self.n_steps, dtype=jnp.float32)
-        (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
-
-        # endpoint: + log p_ref(xT) - log p_target(xT)
-        log_qT = process.log_marginal(xT, self.n_steps)
-        log_p  = target_dist.batch(xT)
-        log_ratio = log_ratio + log_qT - log_p
-
-        # loss = E[ - log_ratio ]
+            mu_bwd = x_next + (sigma2 * gradp_next + factor * u_next) * delta_t
+            log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
+            
+            return log_pfwd - log_pbwd
+        
+        # Vectorize over time steps
+        trans_terms = jax.vmap(compute_transition_term)(jnp.arange(n_steps))
+        trans_sum = jnp.sum(trans_terms, axis=0)  # Sum over time
+        
+        # Endpoint terms
+        log_pT = target_dist.batch(xK, n_steps)  # π_T(x_T)
+        log_ratio = log_p0 - log_pT + trans_sum
+        
         return jnp.mean(-log_ratio)
 
-    
+    def _log_gauss(self, x, mu, var):
+        """Log-density of isotropic Gaussian"""
+        d = x.shape[-1]
+        log_z = -0.5 * d * jnp.log(2 * jnp.pi * var)
+        return log_z - 0.5 * jnp.sum((x - mu)**2, axis=-1) / var
 
 
