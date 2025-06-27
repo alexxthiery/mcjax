@@ -224,7 +224,7 @@ class CMCDLoss(BaseLoss):
             x, key = carry
             key, subkey = jr.split(key)
             u = score_fn(params, t, x)
-            gradp = target_dist.grad_batch(x, t)  # Time-dependent score
+            gradp = target_dist.grad_batch(x)  # Time-dependent score
             
             # Forward transition
             noise = jr.normal(subkey, x.shape) * jnp.sqrt(2 * sigma2 * delta_t)
@@ -241,7 +241,7 @@ class CMCDLoss(BaseLoss):
         
         # Compute final control and gradp
         uK = score_fn(params, n_steps, xK)
-        gradpK = target_dist.grad_batch(xK, n_steps)
+        gradpK = target_dist.grad_batch(xK)
         
         # Build full trajectory arrays
         states = jnp.concatenate([x_traj, xK[None]], axis=0)  # [x0, x1, ..., xK]
@@ -264,8 +264,8 @@ class CMCDLoss(BaseLoss):
             # Backward transition density
             factor = jax.lax.cond(
                 self.use_ctrl_den,
-                lambda: -1.0,
-                lambda: 0.0
+                lambda: -1.0, # CMCD
+                lambda: 0.0 # MCD
             )
             mu_bwd = x_next + (sigma2 * gradp_next + factor * u_next) * delta_t
             log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
