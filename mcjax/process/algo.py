@@ -697,24 +697,32 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
     
     def sample(self, params, rng_key, num_samples):
         """
-        Euler-Maruyama sampler corresponding to CMCD/MCD forward proposal.
+        Euler-Maruyama sampler returning the full trajectory for CMCD/MCD.
+        Output shape: (K+1, num_samples, dim), including initial state.
         """
         @jax.jit
         def gen(key):
             key, sub = jr.split(key)
-            x = self.init_dist.sample(sub, num_samples)
+            x0 = self.init_dist.sample(sub, num_samples) 
             delta_t = 1.0 / self.ou.K
-            for i in range(self.ou.K):
-                t = i * delta_t
-                u = self.score_fn(params, t, x)
-                # drift: always include target score
+
+            def body(carry, i):
+                x, key = carry
+                u = self.score_fn(params, i, x)
                 gradp = self.target_dist.grad_batch(x)
                 drift = self.ou.sigma**2 * gradp + u
                 key, sub = jr.split(key)
                 noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
-                x = drift * delta_t + noise + x
-            return x
+                x_new = x + drift * delta_t + noise
+                return (x_new, key), x_new
+
+            steps = jnp.arange(self.ou.K, dtype=jnp.int32)
+            (final, _), seq = jax.lax.scan(body, (x0, key), steps)
+            full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
+            return full_seq
+
         return gen(rng_key)
+
 
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
