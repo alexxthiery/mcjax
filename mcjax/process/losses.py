@@ -212,14 +212,14 @@ class CMCDLoss(BaseLoss):
         # Sample initial state
         key, subkey = jr.split(key)
         x0 = init_dist.sample(subkey, batch_size)
-        log_p0 = init_dist.batch(x0)  # π₀(x₀)
+        log_p0 = init_dist.batch(x0)  
         
         # Forward pass to generate trajectory
         def forward_step(carry, t):
             x, key = carry
             key, subkey = jr.split(key)
             u = score_fn(params, t, x)
-            gradp = target_dist.grad_batch(x)  # Time-dependent score
+            gradp = init_dist.grad_batch(x)*(1 - t/n_steps) +  target_dist.grad_batch(x)*(t/n_steps)  # Time-dependent score with geometric interpolation
             
             # Forward transition
             noise = jr.normal(subkey, x.shape) * jnp.sqrt(2 * sigma2 * delta_t)
@@ -239,9 +239,9 @@ class CMCDLoss(BaseLoss):
         gradpK = target_dist.grad_batch(xK)
         
         # Build full trajectory arrays
-        states = jnp.concatenate([x_traj, xK[None]], axis=0)  # [x0, x1, ..., xK]
-        controls = jnp.concatenate([u_t, uK[None]], axis=0)  # [u0, u1, ..., uK]
-        gradps = jnp.concatenate([gradp_t, gradpK[None]], axis=0)  # [gradp0, ..., gradpK]
+        states = jnp.concatenate([x_traj, xK[None]], axis=0)  
+        controls = jnp.concatenate([u_t, uK[None]], axis=0)  
+        gradps = jnp.concatenate([gradp_t, gradpK[None]], axis=0)  
         
         # Compute transition terms
         def compute_transition_term(i):
