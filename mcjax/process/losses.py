@@ -262,7 +262,6 @@ class CMCDLoss(BaseLoss):
             )
             mu_bwd = x_next + (sigma2 * gradp_next + factor * u_next) * delta_t
             log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
-            jax.debug.print("log_pfwd: {}, log_pbwd: {}", log_pfwd, log_pbwd)
             
             return log_pfwd - log_pbwd
         
@@ -273,6 +272,8 @@ class CMCDLoss(BaseLoss):
         # Endpoint terms
         log_pT = target_dist.batch(xK)  # π_T(x_T)
         log_ratio = log_p0 - log_pT + trans_sum
+        jax.debug.print("trans_sum: {}, log_p0: {}, log_pT: {}", 
+                        trans_sum, log_p0, log_pT)
         
         return jnp.mean(-log_ratio)
 
