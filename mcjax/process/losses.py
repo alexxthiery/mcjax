@@ -261,8 +261,8 @@ class CMCDLoss(BaseLoss):
             
             mu_bwd = x_next + (sigma2 * gradp_next - u_next) * delta_t
             log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
-            jax.debug.print("log_pfwd: {}, log_pbwd: {}", log_pfwd, log_pbwd)
-            jax.debug.print("x shape:{}", x_cur.shape)
+            # jax.debug.print("log_pfwd: {}, log_pbwd: {}", log_pfwd, log_pbwd)
+            # jax.debug.print("x shape:{}", x_cur.shape)
             
             return log_pfwd - log_pbwd
         
