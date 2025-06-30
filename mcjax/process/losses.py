@@ -274,7 +274,7 @@ class CMCDLoss(BaseLoss):
         log_pT = target_dist.batch(xK)  # π_T(x_T)
         log_ratio = log_p0 - log_pT + trans_sum
         
-        return jnp.mean(-log_ratio)
+        return jnp.mean(log_ratio)
 
     def _log_gauss(self, x, mu, var):
         """Log-density of isotropic Gaussian"""
