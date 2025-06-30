@@ -199,11 +199,6 @@ class PISLoss(BaseLoss):
 
         return jnp.mean(running + psi)
 
-import jax
-import jax.numpy as jnp
-import jax.random as jr
-from functools import partial
-
 class CMCDLoss(BaseLoss):
     def __init__(self, use_control_in_denominator: bool, add_score: bool = False):
         self.use_ctrl_den = use_control_in_denominator
