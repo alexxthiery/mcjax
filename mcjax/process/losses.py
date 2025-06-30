@@ -251,18 +251,18 @@ class CMCDLoss(BaseLoss):
             gradp_next = gradps[i+1]
             
             # Forward transition density
-            mu_fwd = x_cur + (sigma2 * gradp_cur + u_cur) * delta_t
-            log_pfwd = self._log_gauss(x_next, mu_fwd, 2*sigma2*delta_t)
-            
-            # Backward transition density
             factor = jax.lax.cond(
                 self.use_ctrl_den,
-                lambda: -1.0, # CMCD
+                lambda: 1.0, # CMCD
                 lambda: 0.0 # MCD
             )
-            mu_bwd = x_next + (sigma2 * gradp_next + factor * u_next) * delta_t
+            mu_fwd = x_cur + (sigma2 * gradp_cur + factor*u_cur) * delta_t
+            log_pfwd = self._log_gauss(x_next, mu_fwd, 2*sigma2*delta_t)
+            
+            mu_bwd = x_next + (sigma2 * gradp_next - u_next) * delta_t
             log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
             jax.debug.print("log_pfwd: {}, log_pbwd: {}", log_pfwd, log_pbwd)
+            jax.debug.print("x shape:{}", x_cur.shape)
             
             return log_pfwd - log_pbwd
         
