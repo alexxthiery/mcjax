@@ -231,15 +231,13 @@ class CMCDLoss(BaseLoss):
             forward_step, (x0, key), times
         )
         x_t, x_tp1, u_t, gradp_t = forward_vals
-        # Include initial state in trajectory
-        x_traj = jnp.concatenate([x0[None], x_t])
         
         # Compute final control and gradp
         uK = score_fn(params, n_steps, xK)
         gradpK = target_dist.grad_batch(xK)
         
         # Build full trajectory arrays
-        states = jnp.concatenate([x_traj, xK[None]], axis=0)  
+        states = jnp.concatenate([x_t, xK[None]], axis=0)  
         controls = jnp.concatenate([u_t, uK[None]], axis=0)  
         gradps = jnp.concatenate([gradp_t, gradpK[None]], axis=0)  
         
