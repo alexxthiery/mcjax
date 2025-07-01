@@ -500,7 +500,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             key, state, buffer, logz_vals, logz_vars, all_losses, buffer_data, buffer_size = carry
 
             # sample & buffer update
-            seq = self.sample(state.params, key, self.cfg.num_samples_per_outer)
+            seq, _ = self.sample(state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
             buffer = buffer.add(new_x0s)
             # store the buffer data
@@ -536,6 +536,50 @@ class IDEMAlgorithm(BaseAlgorithm):
         flat_losses = all_losses.reshape(-1)
         jax.debug.print("Training complete.")
         return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size
+
+    def sample(self, params, rng_key, num_samples: int):
+        """
+        Generate samples by running an annealed-Langevin reverse pass
+        through the single-shot VE corruption x_t = x0 + sigma(t)*eps
+        """
+        @partial(jax.jit, static_argnums=(2))
+        def generate(params, key, num_samples):
+            key, sub = jr.split(key)
+            sigma1 = self.sigma_fn(1.0)
+            xT = jr.normal(sub, (num_samples, self.data_dim)) * sigma1
+
+            #reverse step-indices
+            Ks = jnp.arange(self.cfg.K - 1, -1, -1)
+
+            def body(carry, k):
+                x_next, key = carry
+
+                # compute exact variance drop Δσ² = σ(k/K)² – σ((k-1)/K)²
+                t_k   = k / self.cfg.K
+                sigma_k = self.sigma_fn(t_k)
+                t_km1 = (k - 1) / self.cfg.K if k > 0 else 0.0
+                sigma_km1 = self.sigma_fn(t_km1)
+                delta_sq = sigma_k**2 - sigma_km1**2
+
+                # network score s_theta(x_t, t=k)
+                u = self.score_fn(params, k, x_next)  
+
+                # one Langevin‐style reverse step
+                key, sub = jr.split(key)
+                noise = jr.normal(sub, x_next.shape) * jnp.sqrt(2 * delta_sq)
+                x_prev = x_next + delta_sq * u + noise
+
+                return (x_prev, key), (x_prev, u)
+
+            # run the reverse chain
+            (x0, _), (seq, score_seq) = jax.lax.scan(
+                body,
+                (xT, key),
+                Ks
+            )
+            return seq, score_seq
+
+        return generate(params, rng_key, num_samples)
 
 class PISAlgorithm(BaseAlgorithm):
     def __init__(self, config):

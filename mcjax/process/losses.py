@@ -28,7 +28,7 @@ class BaseLoss(ABC):
 
 class DDSLoss(BaseLoss):
     """
-    Reverse KL / Log Variance losses for DDS (as in “dDS”).
+    Reverse KL / Log Variance losses for DDS.
     """
     def __init__(self, add_score: bool = False):
         self.add_score = add_score
@@ -126,7 +126,7 @@ class IDEMLoss(BaseLoss):
             sigma = self.sigma_fn(t)    
 
             # draw K independent x0_i ∼ N(x_t_single, σ² I)
-            keys_MC = jr.split(key_single, self.K) # 10_000 is arbitrary, can be larger or smaller
+            keys_MC = jr.split(key_single, 10_000) # 10_000 is arbitrary, can be larger or smaller
             # create an array of x0_MC of shape (K, d, ...)
             x0_MC = jnp.stack([
                 x_t_single + sigma * jr.normal(k, shape=x_t_single.shape)
