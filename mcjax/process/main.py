@@ -155,7 +155,7 @@ def main():
     # generate true score_seq for 1d mixed gaussian case
     if args.target_dist == "1d":
         print("score_seq shape:", score_seq.shape)
-        true_score_seq = np.zeros_like(score_seq)
+        true_score_seq = np.zeros((args.K,10000))
         for t in range(args.K):
             y = samples_seq[t, :, 0]
             true_score_seq[t,:] = alg.ou.ou_mixture_score(y, args.K - t - 1,alg.target_dist.mu,\
