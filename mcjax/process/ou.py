@@ -117,14 +117,14 @@ class OU:
     
         # Expand to match batch shape
         # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
-        diffs = (m_k - y[None, :])                  
+        diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)                
         exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
-                / jnp.sqrt(2*jnp.pi*v_k)         
+                / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
         pis   = weights[:, None, None] * exps      
     
         # numerator: sum_i pis[i] * (diffs[i]/v_k[i])
-        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0)
-        denom = jnp.sum(pis, axis=0)
+        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0) # (batch, 1)
+        denom = jnp.sum(pis, axis=0) # (batch, 1)
     
-        # final score shape (batch,1)
+        # final score shape 
         return numer / denom
