@@ -522,6 +522,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             # inner training step
             state, key, losses = inner_trainer.run(key)
             all_losses = all_losses.at[idx].set(losses)
+            jax.debug.print("Outer step {}, loss = {}", idx, losses.mean())
 
             return (key, state, buffer, logz_vals, logz_vars, all_losses,buffer_data, buffer_size), None
 
