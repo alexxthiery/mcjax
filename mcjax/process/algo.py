@@ -372,6 +372,40 @@ class DDSAlgorithm(BaseAlgorithm):
 
     def make_loss(self):
         return DDSLoss(add_score=self.cfg.add_score)
+    
+    def mixture_score(self, y, k, mu, comp_sigmas, weights):
+        """
+        Compute the score function in OU process for 1d (isotropic) mixed-gaussian initial distribution.
+        """
+        # y:   shape (batch)
+        # k:   integer time index
+        # mu:  array (n_comp, 1)
+        # comp_sigmas: array (n_comp,)  # component std devs
+        # weights: array (n_comp,)
+    
+        # Compute a_k = prod_{j<k}(1 - alpha[j])
+        a_k = jnp.prod(1.0 - self.ou.alpha[:k])
+    
+        # Component means and variances at time k
+        m_k   = jnp.sqrt(a_k) * mu            
+        v_k   = a_k * (comp_sigmas**2) + (1 - a_k)*(self.ou.sigma**2)  
+    
+        # Expand to match batch shape
+        # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
+        diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)               
+        # print(f"y shape:{y.shape}, diffs shape: {diffs.shape}, v_k shape: {v_k.shape}, weights shape: {weights.shape}, m_k shape: {m_k.shape}") 
+        exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
+                / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
+        pis   = weights[:, None, None] * exps      
+    
+        # numerator: sum_i pis[i] * (diffs[i]/v_k[i])
+        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0) # (batch, 1)
+        denom = jnp.sum(pis, axis=0) # (batch, 1)
+    
+        # final score shape 
+        # print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
+        return (numer / denom).reshape(-1)
+
 
 
 class IDEMAlgorithm(BaseAlgorithm):
@@ -581,6 +615,43 @@ class IDEMAlgorithm(BaseAlgorithm):
             return seq, score_seq
 
         return generate(params, rng_key, num_samples)
+    
+    def mixture_score(self, y, t, mu, comp_sigmas, weights):
+        """
+        Exact score for 1d mixed-isotropic Gaussian mixture at time t.
+            y:           array (batch,) or (batch,1)
+            t:           scalar in [0,1]
+            mu:          array (n_comp, 1)
+            comp_sigmas: array (n_comp,)    # sigma_i of each mixture component
+            weights:     array (n_comp,)    # mixture weights w_i
+            Returns:
+            score:       array (batch,)    
+        """
+        # ensure (batch,1)
+        y = jnp.atleast_2d(y)
+        if y.shape[-1] != 1:
+            y = y.reshape(-1, 1)
+
+        # current noise level
+        sigma_t = self.sigma_fn(t)
+
+        #   v_i = σ_i^2 + σ_t^2
+        v   = comp_sigmas**2 + sigma_t**2  # (n_comp,)
+
+        # build (n_comp, batch, 1) diffs
+        diffs = mu[:, None, :] - y[None, :, :]   # (n_comp, batch, 1)
+
+        # component pdfs: N(y | m_i, v_i) 
+        v_e  = v[:, None, None]                             
+        norm = jnp.sqrt(2 * jnp.pi * v_e)                  
+        exps = jnp.exp(-0.5 * (diffs**2) / v_e) / norm       
+        pis  = weights[:, None, None] * exps                
+
+        # weighted average of (m_i - y)/v_i
+        numer = jnp.sum(pis * (diffs / v_e), axis=0)            # (batch,1)
+        denom = jnp.sum(pis, axis=0)                           # (batch,1)
+
+        return (numer / denom).reshape(-1)                     # (batch,)
 
 class PISAlgorithm(BaseAlgorithm):
     def __init__(self, config):
@@ -634,10 +705,10 @@ class PISAlgorithm(BaseAlgorithm):
             noise = jr.normal(sub, shape=x_curr.shape) * jnp.sqrt(delta_t)
             x_next = x_curr + u * delta_t + noise
             
-            return (x_next, key), x_next
+            return (x_next, key), (x_next,u)
         
         init_carry = (x0, key)
-        (x_final, _), seq = jax.lax.scan(
+        (x_final, _), (seq,score_seq) = jax.lax.scan(
             body,
             init_carry,
             jnp.arange(self.cfg.K) 
@@ -645,7 +716,7 @@ class PISAlgorithm(BaseAlgorithm):
         
         # Include initial state in sequence
         full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
-        return full_seq
+        return full_seq, score_seq
 
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
@@ -677,7 +748,7 @@ class PISAlgorithm(BaseAlgorithm):
             # Update state
             x_next = x_curr + u * delta_t + dW
             
-            # Update stochastic integral: ∫ u dW
+            # Update stochastic integral
             stoch_int_update = jnp.sum(u * dW, axis=-1)
             new_stoch_int = stoch_int + stoch_int_update
             
@@ -701,6 +772,45 @@ class PISAlgorithm(BaseAlgorithm):
         logZ = -stoch_int_final - run_cost_final + log_p_target - log_ref
         
         return logZ
+
+    def mixture_score(self, y, k, mu, comp_sigmas, weights):
+        """
+        Exact score for 1d mixed-isotropic Gaussian mixture at time t.
+            y:           array (batch,) or (batch,1)
+            t:           scalar in [0,1]
+            mu:          array (n_comp, 1)
+            comp_sigmas: array (n_comp,)    # sigma_i of each mixture component
+            weights:     array (n_comp,)    # mixture weights w_i
+            Returns:
+            score:       array (batch,)    
+        """
+        # ensure (batch,1)
+        y = jnp.atleast_2d(y)
+        if y.shape[-1] != 1:
+            y = y.reshape(-1, 1)
+
+        # time step and total variance from Brownian increments
+        dt = 1.0 / self.cfg.K
+        var_noise = k * dt               # scalar noise variance
+
+        # component variances at step k: σ_i^2 + var_noise
+        v = comp_sigmas**2 + var_noise  
+
+        # build (n_comp, batch, 1) diffs
+        diffs = mu[:, None, :] - y[None, :, :]   # (n_comp, batch, 1)
+
+        # component pdfs: N(y | m_i, v_i) 
+        v_e  = v[:, None, None]                             
+        norm = jnp.sqrt(2 * jnp.pi * v_e)                  
+        exps = jnp.exp(-0.5 * (diffs**2) / v_e) / norm       
+        pis  = weights[:, None, None] * exps                
+
+        # weighted average of (m_i - y)/v_i
+        numer = jnp.sum(pis * (diffs / v_e), axis=0)            # (batch,1)
+        denom = jnp.sum(pis, axis=0)                           # (batch,1)
+
+        return (numer / denom).reshape(-1)                     # (batch,)
+
 
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):

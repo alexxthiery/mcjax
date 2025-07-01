@@ -97,36 +97,3 @@ class OU:
         norm = -0.5 * (D * jnp.log(2*jnp.pi*var))
         quad = -0.5 * jnp.sum(x**2, axis=-1) / var
         return norm + quad
-
-    def ou_mixture_score(self, y, k, mu, comp_sigmas, weights):
-        """
-        Compute the score function in OU process for (isotropic) mixed-gaussian initial distribution.
-        """
-        # y:   shape (batch)
-        # k:   integer time index
-        # mu:  array (n_comp, 1)
-        # comp_sigmas: array (n_comp,)  # component std devs
-        # weights: array (n_comp,)
-    
-        # Compute a_k = prod_{j<k}(1 - alpha[j])
-        a_k = jnp.prod(1.0 - self.alpha[:k])
-    
-        # Component means and variances at time k
-        m_k   = jnp.sqrt(a_k) * mu            
-        v_k   = a_k * (comp_sigmas**2) + (1 - a_k)*(self.sigma**2)  
-    
-        # Expand to match batch shape
-        # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
-        diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)               
-        # print(f"y shape:{y.shape}, diffs shape: {diffs.shape}, v_k shape: {v_k.shape}, weights shape: {weights.shape}, m_k shape: {m_k.shape}") 
-        exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
-                / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
-        pis   = weights[:, None, None] * exps      
-    
-        # numerator: sum_i pis[i] * (diffs[i]/v_k[i])
-        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0) # (batch, 1)
-        denom = jnp.sum(pis, axis=0) # (batch, 1)
-    
-        # final score shape 
-        # print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
-        return (numer / denom).reshape(-1)
