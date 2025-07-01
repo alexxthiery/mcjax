@@ -157,7 +157,7 @@ def main():
         print("score_seq shape:", score_seq.shape)
         true_score_seq = np.zeros((args.K,10000))
         for t in range(args.K):
-            y = samples_seq[t, :, 0]
+            y = samples_seq[t, :, :]
             true_score_seq[t,:] = alg.ou.ou_mixture_score(y, args.K - t - 1,alg.target_dist.mu,\
                                                             alg.target_dist.sigma, jnp.exp(alg.target_dist.log_w))
 
