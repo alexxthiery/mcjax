@@ -158,12 +158,12 @@ class BaseAlgorithm(ABC):
             yK = self.init_dist.sample(sub, num_samples)
             def body(carry, k):
                 y_next, key_ = carry
-                key_, yk = self.ou.reverse_step(key_, y_next, k, self.score_fn, params)
-                return (yk, key_), yk
-            (y0, _), seq = jax.lax.scan(
+                key_, yk, score = self.ou.reverse_step(key_, y_next, k, self.score_fn, params)
+                return (yk, key_), (yk,score)
+            (y0, _), (seq,score_seq) = jax.lax.scan(
                 body, (yK, key), jnp.arange(self.ou.K)
             )
-            return seq  # shape (K, num_samples, dim)
+            return seq,score_seq  
         return generate(params, rng_key)   
 
     @partial(jax.jit, static_argnums=(0, 3))

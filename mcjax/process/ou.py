@@ -61,12 +61,12 @@ class OU:
         # y_next is the actual next state from the reverse chain
         key, key_ = jr.split(key)
         eps = jr.normal(key_, shape=y_next.shape)
-        drift = 2 * self.sigma**2 * (1 - self.sqrt_1m_alpha[self.K - k - 1]) *\
-          score_fn(params, self.K - k - 1, y_next)
+        score = score_fn(params, self.K - k - 1, y_next)
+        drift = 2 * self.sigma**2 * (1 - self.sqrt_1m_alpha[self.K - k - 1]) * score
         y_k = (self.sqrt_1m_alpha[self.K - k - 1] * y_next
               + drift
               + self.sigma * self.sqrt_alpha[self.K - k - 1] * eps)
-        return key, y_k
+        return key, y_k,score
 
     @partial(jax.jit, static_argnums=(0, 3))
     def integrate_reverse(self, key: jr.PRNGKey, x1: jnp.ndarray,
@@ -97,3 +97,34 @@ class OU:
         norm = -0.5 * (D * jnp.log(2*jnp.pi*var))
         quad = -0.5 * jnp.sum(x**2, axis=-1) / var
         return norm + quad
+
+    def ou_mixture_score(self, y, k, mu, comp_sigmas, weights):
+        """
+        Compute the score function in OU process for (isotropic) mixed-gaussian initial distribution.
+        """
+        # y:   shape (batch, dim=1)
+        # k:   integer time index
+        # mu:  array (n_comp, 1)
+        # comp_sigmas: array (n_comp,)  # component std devs
+        # weights: array (n_comp,)
+    
+        # Compute a_k = prod_{j<k}(1 - alpha[j])
+        a_k = jnp.prod(1.0 - self.alpha[:k])
+    
+        # Component means and variances at time k
+        m_k   = jnp.sqrt(a_k) * mu            
+        v_k   = a_k * (comp_sigmas**2) + (1 - a_k)*(self.sigma**2)  
+    
+        # Expand to match batch shape
+        # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
+        diffs = (m_k - y[None, :])                  
+        exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
+                / jnp.sqrt(2*jnp.pi*v_k)         
+        pis   = weights[:, None, None] * exps      
+    
+        # numerator: sum_i pis[i] * (diffs[i]/v_k[i])
+        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0)
+        denom = jnp.sum(pis, axis=0)
+    
+        # final score shape (batch,1)
+        return numer / denom

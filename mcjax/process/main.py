@@ -141,8 +141,9 @@ def main():
 
     # Sampling
     key, sub = jr.split(key)
-    samples_seq = alg.sample(alg.state.params, sub, num_samples=10000)
+    samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=10000)
     samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
+    score_seq = jax.device_get(score_seq)      
 
     # Metrics
     final_samples = samples_seq[-1]
@@ -151,8 +152,30 @@ def main():
     result = two_wasserstein(np.array(final_samples), np.array(tgt_samps))
     print(f"Wasserstein distance: {result:.4e}")
 
+    # generate true score_seq for 1d mixed gaussian case
+    if alg.target_dist.name == "1d":
+        true_score_seq = jnp.zeros_like(score_seq)
+        for t in range(alg.K):
+            y = samples_seq[t, :, 0]
+            true_score_seq[t,:] = alg.ou.ou_mixture_score(y, alg.K - t - 1,alg.target_dist.mu,\
+                                                            alg.target_dist.sigma, alg.target_dist.weights)
+
+        # plot the true_score_seq and network-generated score_seq (mean at each time step)
+        plt.figure(figsize=(10, 5))
+        plt.plot(true_score_seq.mean(axis=0), label="True Score", color='blue')
+        plt.plot(score_seq.mean(axis=0), label="Estimated Score", color='orange')
+        plt.xlabel("Sample Index")
+        plt.ylabel("Score")
+        plt.title("True vs Estimated Score at Final Time Step")
+        plt.legend()
+        plt.savefig(f"{args.results_dir}/{args.algo}_true_vs_estimated_score.png")
+        plt.close()
+
+
+
+
     # Visualization 
-    alg.visualize_samples(samples_seq)
+    # alg.visualize_samples(samples_seq)
 
 
 
