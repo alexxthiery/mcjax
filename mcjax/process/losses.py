@@ -127,7 +127,7 @@ class IDEMLoss(BaseLoss):
 
             # draw K independent x0_i ∼ N(x_t_single, σ² I)
             keys_MC = jr.split(key_single, 10_000) # 10_000 is arbitrary, can be larger or smaller
-            # create an array of x0_MC of shape (K, d, ...)
+            # create an array of x0_MC of shape (10_000, d, ...)
             x0_MC = jnp.stack([
                 x_t_single + sigma * jr.normal(k, shape=x_t_single.shape)
                 for k in keys_MC
@@ -142,7 +142,7 @@ class IDEMLoss(BaseLoss):
 
             # compute weighted average of gradient vectors:
             expand_dims = (1,) * (grad_logp_MC.ndim - 1)
-            w_shaped = w_norm.reshape((self.K,) + expand_dims)  # → (K, 1, 1, …)
+            w_shaped = w_norm.reshape((10_000,) + expand_dims)  # → (K, 1, 1, …)
             numerator = jnp.sum(w_shaped * grad_logp_MC, axis=0)  # → (d, …)
 
             return numerator
