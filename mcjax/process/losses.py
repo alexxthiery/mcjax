@@ -255,13 +255,11 @@ class CMCDLoss(BaseLoss):
                 lambda: 1.0, # CMCD
                 lambda: 0.0 # MCD
             )
-            mu_fwd = x_cur + (sigma2 * gradp_cur + factor*u_cur) * delta_t
+            mu_fwd = x_cur + (sigma2 * gradp_cur - factor*u_cur) * delta_t
             log_pfwd = self._log_gauss(x_next, mu_fwd, 2*sigma2*delta_t)
             
             mu_bwd = x_next + (sigma2 * gradp_next - u_next) * delta_t
             log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
-            # jax.debug.print("log_pfwd: {}, log_pbwd: {}", log_pfwd, log_pbwd)
-            # jax.debug.print("x shape:{}", x_cur.shape)
             
             return log_pfwd - log_pbwd
         
@@ -273,7 +271,7 @@ class CMCDLoss(BaseLoss):
         log_pT = target_dist.batch(xK)  # π_T(x_T)
         log_ratio = log_p0 - log_pT + trans_sum
         
-        return jnp.mean(log_ratio)
+        return jnp.mean(-log_ratio)
 
     def _log_gauss(self, x, mu, var):
         """Log-density of isotropic Gaussian"""

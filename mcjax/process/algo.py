@@ -792,7 +792,7 @@ class PISAlgorithm(BaseAlgorithm):
 
         # time step and total variance from Brownian increments
         dt = 1.0 / self.cfg.K
-        var_noise = k * dt               # scalar noise variance
+        var_noise = k * dt             
 
         # component variances at step k: σ_i^2 + var_noise
         v = comp_sigmas**2 + var_noise  
@@ -860,19 +860,21 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         def gen(key):
             key, sub = jr.split(key)
             x0 = self.init_dist.sample(sub, num_samples) 
-            delta_t = 1.0 / self.ou.K
+            delta_t = 1.0 / self.cfg.K
 
             def body(carry, i):
                 x, key = carry
                 u = self.score_fn(params, i, x)
-                gradp = self.target_dist.grad_batch(x)
+                alpha = i / self.cfg.K
+                gradp = (1 - alpha) * self.init_dist.grad_batch(x) \
+                    + alpha  * self.target_dist.grad_batch(x)
                 drift = self.ou.sigma**2 * gradp + u
                 key, sub = jr.split(key)
                 noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
                 x_new = x + drift * delta_t + noise
                 return (x_new, key), x_new
 
-            steps = jnp.arange(self.ou.K, dtype=jnp.int32)
+            steps = jnp.arange(self.ou.K)
             (final, _), seq = jax.lax.scan(body, (x0, key), steps)
             full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
             return full_seq
