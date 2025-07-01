@@ -122,30 +122,28 @@ class IDEMLoss(BaseLoss):
 
 
         def mc_estimate_single(x_t_single, t, key_single):
-            # compute Sk for one single sampled x0
-            sigma = self.sigma_fn(t)    
+            sigma = self.sigma_fn(t)               # scalar
 
-            # draw K independent x0_i ∼ N(x_t_single, σ² I)
-            keys_MC = jr.split(key_single, 10_000) # 10_000 is arbitrary, can be larger or smaller
-            # create an array of x0_MC of shape (10_000, d, ...)
-            x0_MC = jnp.stack([
-                x_t_single + sigma * jr.normal(k, shape=x_t_single.shape)
-                for k in keys_MC
-            ], axis=0)
+            # draw K independent samples in one go:
+            # shape = (K, *x_t_single.shape)
+            eps_MC = jr.normal(key_single, 
+                            shape=(10_000,) + x_t_single.shape)
+            x0_MC  = x_t_single[None, ...] + sigma * eps_MC
 
-            # evaluate log-density and score at each of the K samples:
-            logp_MC = self.target_dist.batch(x0_MC)     
-            grad_logp_MC = self.target_dist.grad_batch(x0_MC)   
+            # now everything is a single vectorized call:
+            logp_MC      = self.target_dist.batch(x0_MC)     
+            grad_logp_MC = self.target_dist.grad_batch(x0_MC)    
 
-            lse = logsumexp(logp_MC)               
-            w_norm = jnp.exp(logp_MC - lse)         
+            # log-sum-exp in the K‐axis
+            lse   = logsumexp(logp_MC, axis=0)                 
+            w_norm = jnp.exp(logp_MC - lse)                    
 
-            # compute weighted average of gradient vectors:
-            expand_dims = (1,) * (grad_logp_MC.ndim - 1)
-            w_shaped = w_norm.reshape((10_000,) + expand_dims)  # → (K, 1, 1, …)
-            numerator = jnp.sum(w_shaped * grad_logp_MC, axis=0)  # → (d, …)
+            # weight and reduce
+            weights = w_norm[..., None]    # shape (K, 1, …)
+            numerator = jnp.sum(weights * grad_logp_MC, axis=0) 
 
             return numerator
+
 
         keys_batch = jr.split(key, batch_size)  # → (B,) of PRNGKey
 
