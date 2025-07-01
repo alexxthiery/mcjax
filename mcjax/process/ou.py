@@ -129,4 +129,4 @@ class OU:
     
         # final score shape 
         print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
-        return numer / denom
+        return (numer / denom).reshape(-1)
