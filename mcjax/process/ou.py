@@ -127,4 +127,5 @@ class OU:
         denom = jnp.sum(pis, axis=0) # (batch)
     
         # final score shape 
+        print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
         return numer / denom

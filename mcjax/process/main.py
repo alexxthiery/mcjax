@@ -154,6 +154,7 @@ def main():
 
     # generate true score_seq for 1d mixed gaussian case
     if args.target_dist == "1d":
+        print("score_seq shape:", score_seq.shape)
         true_score_seq = np.zeros_like(score_seq)
         for t in range(args.K):
             y = samples_seq[t, :, 0]
