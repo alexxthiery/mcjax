@@ -163,8 +163,8 @@ def main():
 
         # plot the true_score_seq and network-generated score_seq (mean at each time step)
         plt.figure(figsize=(10, 5))
-        plt.plot(true_score_seq.mean(axis=0), label="True Score", color='blue')
-        plt.plot(score_seq.mean(axis=0), label="Estimated Score", color='orange')
+        plt.plot(true_score_seq.mean(axis=1), label="True Score", color='blue')
+        plt.plot(score_seq.mean(axis=1), label="Estimated Score", color='orange')
         plt.xlabel("Sample Index")
         plt.ylabel("Score")
         plt.title("True vs Estimated Score at Final Time Step")
