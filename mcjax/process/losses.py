@@ -28,7 +28,7 @@ class BaseLoss(ABC):
 
 class DDSLoss(BaseLoss):
     """
-    Reverse KL / Log Variance losses for DDS (as in “dDS”).
+    Reverse KL / Log Variance losses for DDS.
     """
     def __init__(self, add_score: bool = False):
         self.add_score = add_score
@@ -85,12 +85,12 @@ class IDEMLoss(BaseLoss):
     Implements the Iterated Denoising Energy Matching (iDEM) inner-loop loss:
       L_DEM(x_t, t) = || S_K(x_t, t) - s_theta(x_t, t) ||^2,
     """
-    def __init__(self, K: int, sigma_fn: callable, buffer, target_dist, score_fn):
+    def __init__(self, num_samples: int, sigma_fn: callable, buffer, target_dist, score_fn):
         """
         Args:
           K: number of Monte Carlo samples used in estimating the score S_K.
         """
-        self.K = K
+        self.num_samples = num_samples
         self.sigma_fn = sigma_fn  # (geometric) noise schedule
         self.buffer = buffer  # a Buffer instance to sample x0 from
         self.target_dist = target_dist
@@ -122,30 +122,28 @@ class IDEMLoss(BaseLoss):
 
 
         def mc_estimate_single(x_t_single, t, key_single):
-            # compute Sk for one single sampled x0
-            sigma = self.sigma_fn(t)    
+            sigma = self.sigma_fn(t)               # scalar
 
-            # draw K independent x0_i ∼ N(x_t_single, σ² I)
-            keys_MC = jr.split(key_single, self.K) # 10_000 is arbitrary, can be larger or smaller
-            # create an array of x0_MC of shape (K, d, ...)
-            x0_MC = jnp.stack([
-                x_t_single + sigma * jr.normal(k, shape=x_t_single.shape)
-                for k in keys_MC
-            ], axis=0)
+            # draw K independent samples in one go:
+            # shape = (K, *x_t_single.shape)
+            eps_MC = jr.normal(key_single, 
+                            shape=(self.num_samples,) + x_t_single.shape)
+            x0_MC  = x_t_single[None, ...] + sigma * eps_MC
 
-            # evaluate log-density and score at each of the K samples:
-            logp_MC = self.target_dist.batch(x0_MC)     
-            grad_logp_MC = self.target_dist.grad_batch(x0_MC)   
+            # now everything is a single vectorized call:
+            logp_MC      = self.target_dist.batch(x0_MC)     
+            grad_logp_MC = self.target_dist.grad_batch(x0_MC)    
 
-            lse = logsumexp(logp_MC)               
-            w_norm = jnp.exp(logp_MC - lse)         
+            # log-sum-exp in the K‐axis
+            lse   = logsumexp(logp_MC, axis=0)                 
+            w_norm = jnp.exp(logp_MC - lse)                    
 
-            # compute weighted average of gradient vectors:
-            expand_dims = (1,) * (grad_logp_MC.ndim - 1)
-            w_shaped = w_norm.reshape((self.K,) + expand_dims)  # → (K, 1, 1, …)
-            numerator = jnp.sum(w_shaped * grad_logp_MC, axis=0)  # → (d, …)
+            # weight and reduce
+            weights = w_norm[..., None]    # shape (K, 1, …)
+            numerator = jnp.sum(weights * grad_logp_MC, axis=0) 
 
             return numerator
+
 
         keys_batch = jr.split(key, batch_size)  # → (B,) of PRNGKey
 
@@ -153,6 +151,7 @@ class IDEMLoss(BaseLoss):
         S_K_batch = jax.vmap(mc_estimate_single, in_axes=(0, None, 0), out_axes=0)(
             x_t, t, keys_batch)
 
+        
         s_pred = self.score_fn(params, t, x_t) 
 
         # Compute per-example squared ‖S_K - s_pred‖² and average:
@@ -256,13 +255,11 @@ class CMCDLoss(BaseLoss):
                 lambda: 1.0, # CMCD
                 lambda: 0.0 # MCD
             )
-            mu_fwd = x_cur + (sigma2 * gradp_cur + factor*u_cur) * delta_t
+            mu_fwd = x_cur + (sigma2 * gradp_cur - factor*u_cur) * delta_t
             log_pfwd = self._log_gauss(x_next, mu_fwd, 2*sigma2*delta_t)
             
             mu_bwd = x_next + (sigma2 * gradp_next - u_next) * delta_t
             log_pbwd = self._log_gauss(x_cur, mu_bwd, 2*sigma2*delta_t)
-            # jax.debug.print("log_pfwd: {}, log_pbwd: {}", log_pfwd, log_pbwd)
-            # jax.debug.print("x shape:{}", x_cur.shape)
             
             return log_pfwd - log_pbwd
         
@@ -274,7 +271,7 @@ class CMCDLoss(BaseLoss):
         log_pT = target_dist.batch(xK)  # π_T(x_T)
         log_ratio = log_p0 - log_pT + trans_sum
         
-        return jnp.mean(log_ratio)
+        return jnp.mean(-log_ratio)
 
     def _log_gauss(self, x, mu, var):
         """Log-density of isotropic Gaussian"""

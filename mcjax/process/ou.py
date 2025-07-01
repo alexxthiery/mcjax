@@ -61,12 +61,12 @@ class OU:
         # y_next is the actual next state from the reverse chain
         key, key_ = jr.split(key)
         eps = jr.normal(key_, shape=y_next.shape)
-        drift = 2 * self.sigma**2 * (1 - self.sqrt_1m_alpha[self.K - k - 1]) *\
-          score_fn(params, self.K - k - 1, y_next)
+        score = score_fn(params, self.K - k - 1, y_next)
+        drift = 2 * self.sigma**2 * (1 - self.sqrt_1m_alpha[self.K - k - 1]) * score
         y_k = (self.sqrt_1m_alpha[self.K - k - 1] * y_next
               + drift
               + self.sigma * self.sqrt_alpha[self.K - k - 1] * eps)
-        return key, y_k
+        return key, y_k,score
 
     @partial(jax.jit, static_argnums=(0, 3))
     def integrate_reverse(self, key: jr.PRNGKey, x1: jnp.ndarray,
