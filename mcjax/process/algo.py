@@ -485,7 +485,7 @@ class IDEMAlgorithm(BaseAlgorithm):
 
          
         # Define geometric σ(t) inside this class:
-        #     σ(t) = σ_min * (σ_max/σ_min)^t      for t ∈ [0,1]
+        #     σ(t) = σ_min * (σ_max/σ_min)^t      for t in [0,1]
         sigma_min = 1e-2
         sigma_max = 3.0
 
@@ -506,7 +506,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         self.loss_obj = self.make_loss()
 
     def make_loss(self):
-        return IDEMLoss(K=200, sigma_fn=self.sigma_fn,buffer=self.buffer,\
+        return IDEMLoss(num_samples=10_000, sigma_fn=self.sigma_fn,buffer=self.buffer,\
                          target_dist=self.target_dist, score_fn=self.score_fn)
 
     # override train function
@@ -620,7 +620,7 @@ class IDEMAlgorithm(BaseAlgorithm):
         """
         Exact score for 1d mixed-isotropic Gaussian mixture at time t.
             y:           array (batch,) or (batch,1)
-            t:           scalar in [0,1]
+            t:           integar time index in [0, K-1]
             mu:          array (n_comp, 1)
             comp_sigmas: array (n_comp,)    # sigma_i of each mixture component
             weights:     array (n_comp,)    # mixture weights w_i
@@ -633,6 +633,7 @@ class IDEMAlgorithm(BaseAlgorithm):
             y = y.reshape(-1, 1)
 
         # current noise level
+        t = t/ self.cfg.K  # normalize t to [0,1]
         sigma_t = self.sigma_fn(t)
 
         #   v_i = σ_i^2 + σ_t^2

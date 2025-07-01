@@ -85,12 +85,12 @@ class IDEMLoss(BaseLoss):
     Implements the Iterated Denoising Energy Matching (iDEM) inner-loop loss:
       L_DEM(x_t, t) = || S_K(x_t, t) - s_theta(x_t, t) ||^2,
     """
-    def __init__(self, K: int, sigma_fn: callable, buffer, target_dist, score_fn):
+    def __init__(self, num_samples: int, sigma_fn: callable, buffer, target_dist, score_fn):
         """
         Args:
           K: number of Monte Carlo samples used in estimating the score S_K.
         """
-        self.K = K
+        self.num_samples = num_samples
         self.sigma_fn = sigma_fn  # (geometric) noise schedule
         self.buffer = buffer  # a Buffer instance to sample x0 from
         self.target_dist = target_dist
@@ -127,7 +127,7 @@ class IDEMLoss(BaseLoss):
             # draw K independent samples in one go:
             # shape = (K, *x_t_single.shape)
             eps_MC = jr.normal(key_single, 
-                            shape=(10_000,) + x_t_single.shape)
+                            shape=(self.num_samples,) + x_t_single.shape)
             x0_MC  = x_t_single[None, ...] + sigma * eps_MC
 
             # now everything is a single vectorized call:
@@ -151,6 +151,7 @@ class IDEMLoss(BaseLoss):
         S_K_batch = jax.vmap(mc_estimate_single, in_axes=(0, None, 0), out_axes=0)(
             x_t, t, keys_batch)
 
+        
         s_pred = self.score_fn(params, t, x_t) 
 
         # Compute per-example squared ‖S_K - s_pred‖² and average:
