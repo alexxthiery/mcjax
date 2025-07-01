@@ -158,7 +158,7 @@ def main():
         for t in range(args.K):
             y = samples_seq[t, :, 0]
             true_score_seq[t,:] = alg.ou.ou_mixture_score(y, args.K - t - 1,alg.target_dist.mu,\
-                                                            alg.target_dist.sigma, alg.target_dist.weights)
+                                                            alg.target_dist.sigma, jnp.exp(alg.target_dist.log_w))
 
         # plot the true_score_seq and network-generated score_seq (mean at each time step)
         plt.figure(figsize=(10, 5))
