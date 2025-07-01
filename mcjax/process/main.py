@@ -153,7 +153,7 @@ def main():
     print(f"Wasserstein distance: {result:.4e}")
 
     # generate true score_seq for 1d mixed gaussian case
-    if alg.target_dist.name == "1d":
+    if args.target_dist == "1d":
         true_score_seq = jnp.zeros_like(score_seq)
         for t in range(alg.K):
             y = samples_seq[t, :, 0]
