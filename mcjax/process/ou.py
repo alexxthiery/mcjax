@@ -102,7 +102,7 @@ class OU:
         """
         Compute the score function in OU process for (isotropic) mixed-gaussian initial distribution.
         """
-        # y:   shape (batch, dim=1)
+        # y:   shape (batch)
         # k:   integer time index
         # mu:  array (n_comp, 1)
         # comp_sigmas: array (n_comp,)  # component std devs
@@ -117,14 +117,14 @@ class OU:
     
         # Expand to match batch shape
         # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
-        diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)                
-        exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
-                / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
-        pis   = weights[:, None, None] * exps      
+        diffs = m_k[:, None] - y[None, :] # shape (n_comp, batch)                
+        exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None]) \
+                / jnp.sqrt(2*jnp.pi*v_k[:, None])         
+        pis   = weights[:, None] * exps      
     
         # numerator: sum_i pis[i] * (diffs[i]/v_k[i])
-        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0) # (batch, 1)
-        denom = jnp.sum(pis, axis=0) # (batch, 1)
+        numer = jnp.sum(pis * (diffs / v_k[:, None]), axis=0) # (batch)
+        denom = jnp.sum(pis, axis=0) # (batch)
     
         # final score shape 
         return numer / denom
