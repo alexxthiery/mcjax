@@ -557,7 +557,7 @@ class IDEMAlgorithm(BaseAlgorithm):
                 # compute exact variance drop Δσ² = σ(k/K)² – σ((k-1)/K)²
                 t_k   = k / self.cfg.K
                 sigma_k = self.sigma_fn(t_k)
-                t_km1 = (k - 1) / self.cfg.K if k > 0 else 0.0
+                t_km1 = jnp.max((k - 1) / self.cfg.K,0.0)
                 sigma_km1 = self.sigma_fn(t_km1)
                 delta_sq = sigma_k**2 - sigma_km1**2
 
