@@ -118,7 +118,7 @@ class OU:
         # Expand to match batch shape
         # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
         diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)               
-        print(f"y shape:{y.shape}, diffs shape: {diffs.shape}, v_k shape: {v_k.shape}, weights shape: {weights.shape}, m_k shape: {m_k.shape}") 
+        # print(f"y shape:{y.shape}, diffs shape: {diffs.shape}, v_k shape: {v_k.shape}, weights shape: {weights.shape}, m_k shape: {m_k.shape}") 
         exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
                 / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
         pis   = weights[:, None, None] * exps      
@@ -128,5 +128,5 @@ class OU:
         denom = jnp.sum(pis, axis=0) # (batch, 1)
     
         # final score shape 
-        print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
+        # print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
         return (numer / denom).reshape(-1)
