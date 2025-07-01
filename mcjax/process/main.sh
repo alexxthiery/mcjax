@@ -22,7 +22,7 @@ model_path='model_params.pkl' # Path to save the model parameters
 results_dir='results' # Path to save the results
 
 buffer_size=5000 # Buffer size for the training data in IDEM algorithm
-inner_iters=2000 # Number of inner steps for the IDEM algorithm
+inner_iters=200 # Number of inner steps for the IDEM algorithm
 outer_iters=200 # Number of outer steps for the IDEM algorithm
 num_samples_per_outer=1000 # Number of samples per outer step for the IDEM algorithm
 
