@@ -172,11 +172,8 @@ def main():
         plt.savefig(f"{args.results_dir}/{args.algo}_true_vs_estimated_score.png")
         plt.close()
 
-
-
-
     # Visualization 
-    # alg.visualize_samples(samples_seq)
+    alg.visualize_samples(samples_seq)
 
 
 
