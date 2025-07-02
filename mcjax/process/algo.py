@@ -872,12 +872,12 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
                 key, sub = jr.split(key)
                 noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
                 x_new = x + drift * delta_t + noise
-                return (x_new, key), x_new
+                return (x_new, key), (x_new,u)
 
             steps = jnp.arange(self.ou.K)
-            (final, _), seq = jax.lax.scan(body, (x0, key), steps)
+            (final, _), (seq,score_seq) = jax.lax.scan(body, (x0, key), steps)
             full_seq = jnp.concatenate([x0[None, ...], seq], axis=0)
-            return full_seq
+            return full_seq,score_seq
 
         return gen(rng_key)
 
