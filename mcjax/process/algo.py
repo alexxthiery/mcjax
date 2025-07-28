@@ -16,9 +16,10 @@ from jax.scipy.special import logsumexp
 from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
-from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40
-from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss
+from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40, GMMFixed
+from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss, SupervisedScoreMatchingLoss
 from trainer import Trainer, InnerTrainer
+from mcjax.proba.sonar import BayesianLogisticTarget
 
 class BaseAlgorithm(ABC):
     """
@@ -49,13 +50,16 @@ class BaseAlgorithm(ABC):
 
         # Build the target distribution
         if config.target_dist == 'gmm40':
-            self.target_dist = GMM40()
+            self.target_dist = GMM40(n_mixes=2, loc_scaling=5.0, weights=jnp.array([0.6, 0.4])) # test with 2 components for faster debugging
+            self.data_dim = 2
+        elif config.target_dist == 'gmmfixed':
+            self.target_dist = GMMFixed()
             self.data_dim = 2
         elif config.target_dist == '1d':
-            mu = jnp.array([[-2.],[2.],[4.]])
-            dist_sigma = jnp.array([0.5,0.5,0.2])
+            mu = jnp.array([[-1.],[1.]])
+            dist_sigma = jnp.array([0.5,0.6])
             log_var = jnp.log(dist_sigma**2)
-            weights = jnp.array([0.5,0.3,0.2])
+            weights = jnp.array([0.6,0.4])
             self.target_dist = MixedIsotropicGauss(
                 mu=mu, log_var=log_var, weights=weights
             )
@@ -63,27 +67,50 @@ class BaseAlgorithm(ABC):
         elif config.target_dist == 'funnel':
             self.target_dist = NealFunnel(sigma_x=3.0, dim=2)
             self.data_dim = 2
+        
+        elif config.target_dist == 'sonar':
+            self.target_dist = BayesianLogisticTarget(prior_var=1.0)
+            self.data_dim = self.target_dist.d  # 61 features + bias = 62
 
         else:
             raise ValueError(f"Unknown target_dist: {config.target_dist}")
 
         # Build the reference initial distribution
         self.init_dist = IsotropicGauss(
-            mu=jnp.zeros(self.data_dim), log_var=1.0
+            mu=jnp.zeros(self.data_dim), log_var=2*jnp.log(config.sigma)
         )
         
         # create timesteps / beta / alpha schedule
         K = config.K
+        T = config.T
         ts = jnp.arange(K, dtype=jnp.float32)
+        ############################
+        # Always set this to false: No need to use variable time steps 
+        ############################
         if config.variable_ts:
-            beta_start, beta_end = 0.1, 20.0
+            beta_start, beta_end = 1.0, 20.0
             beta = beta_start + (beta_end - beta_start) * (ts / (K - 1))
         else:
-            beta = jnp.ones(K) * 0.5
-        alpha = 1.0 - jnp.exp(-2.0 * beta / K)
+            beta = jnp.ones(K) * 2
+        alpha = 1.0 - jnp.exp(-2.0 * beta * T / K)
 
         # make the OU process
-        self.ou = OU(alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
+        self.ou = OU(T = T, alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
+
+        # draw beta, alpha, sqrt_1m_alpha, sqrt_alpha in one plot
+        sqrt_1m_alpha = jnp.sqrt(1.0 - alpha)
+        sqrt_alpha = jnp.sqrt(alpha)
+        plt.figure(figsize=(10, 6))
+        plt.plot(ts, alpha, label='alpha')
+        plt.plot(ts, sqrt_1m_alpha, label='sqrt_1m_alpha')
+        plt.plot(ts, sqrt_alpha, label='sqrt_alpha')
+        plt.legend()
+        plt.xlabel('Time step')
+        plt.ylabel('Value')
+        plt.title('SDE Schedule')
+        plt.grid()
+        plt.savefig(f"{config.results_dir}/sde_schedule.png")
+        plt.close()
 
     def make_score_fn(self):
         """
@@ -112,8 +139,8 @@ class BaseAlgorithm(ABC):
 
             elif condition == 'grad_score':
                 gradp = target.grad_batch(y)  
-                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
-                # normed = gradp # test without batch normalization
+                # normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
+                normed = gradp # test without batch normalization
                 return nn1 + nn2 * normed
 
             else:
@@ -155,7 +182,7 @@ class BaseAlgorithm(ABC):
         @jax.jit
         def generate(params, key):
             key, sub = jr.split(key)
-            yK = self.init_dist.sample(sub, num_samples)
+            yK = self.init_dist.sample(sub, num_samples)  # shape (num_samples, data_dim)
             def body(carry, k):
                 y_next, key_ = carry
                 key_, yk, score = self.ou.reverse_step(key_, y_next, k, self.score_fn, params)
@@ -220,7 +247,7 @@ class BaseAlgorithm(ABC):
 
         return logZ
 
-    def visualize_samples(self, sample_seq):
+    def visualize_samples(self, sample_seq, figname):
         """
         Generic 1D / 2D visualization of the reverse chain. 
         sample_seq is expected to have shape (K, num_samples, data_dim).
@@ -231,7 +258,6 @@ class BaseAlgorithm(ABC):
          - self.cfg.K, self.cfg.results_dir, etc.
         """
     
-
         if self.data_dim == 1:
             fig, ax = plt.subplots(figsize=(10, 6))
             # Plot initial‐ and target‐density reference lines
@@ -275,60 +301,87 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/density_evolution_{self.cfg.algo}.mp4'
+            fname = f'{self.cfg.results_dir}/density_evolution_{self.cfg.algo}_{figname}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
         elif self.data_dim == 2:
-            fig, ax = plt.subplots(figsize=(10, 10))
-
             key = jr.PRNGKey(42)
-            pts = self.target_dist.sample(key, 100_000)      # shape (100k, 2)
-            pts = jax.device_get(pts)                       # now a NumPy array
+            pts = self.target_dist.sample(key, 100_000)
+            pts = jax.device_get(pts)
 
-            # compute percentiles
-            lower = np.percentile(pts, 0.5, axis=0)         # shape (2,)
-            upper = np.percentile(pts, 99.5, axis=0)        # shape (2,)
-
-            # add a 5% margin
+            lower = np.percentile(pts, 0.5, axis=0)
+            upper = np.percentile(pts, 99.5, axis=0)
             margin = 0.05 * (upper - lower)
             xmin, xmax = lower[0] - margin[0], upper[0] + margin[0]
             ymin, ymax = lower[1] - margin[1], upper[1] + margin[1]
 
-            # build grid & plot exactly as before
             x = np.linspace(xmin, xmax, 200)
             y = np.linspace(ymin, ymax, 200)
             X, Y = np.meshgrid(x, y)
             grid = np.stack([X.ravel(), Y.ravel()], axis=1)
             grid = jnp.array(grid)
 
-            Ztarg = self.target_dist.batch(grid).reshape(X.shape)
-            contour = ax.contourf(X, Y, jnp.exp(Ztarg), levels=10)
-            fig.colorbar(contour, ax=ax)
 
-            scatter = ax.scatter([], [], c='red', s=10, alpha=0.6, label='Samples')
-            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
-            ax.set_xlabel('x1')
-            ax.set_ylabel('x2')
-            ax.set_title('2D Sample Movement')
+            Ztarg = self.target_dist.batch(grid).reshape(X.shape)
+            Ztarg = np.exp(np.array(Ztarg))
+            Ztarg_norm = (Ztarg - Ztarg.min()) / (Ztarg.max() - Ztarg.min())
+            vmin, vmax = Ztarg.min(), Ztarg.max()
+
+            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+            ax_left, ax_right = axes
+            plt.tight_layout()
+
+            # --- Right: target density (fixed contour) ---
+
+            contour_right = ax_right.contourf(X, Y, Ztarg_norm.T, levels=30, cmap="viridis")
+            ax_right.set_title("Target Density")
+            ax_right.set_xlabel("x1")
+            ax_right.set_ylabel("x2")
+
+            # --- Left: evolving sample density  ---
+            curr = sample_seq[0]
+            H, xe, ye = np.histogram2d(curr[:, 0], curr[:, 1], bins=200,
+                                    range=[[xmin, xmax], [ymin, ymax]], density=True)
+            H_norm = (H - H.min()) / (H.max() - H.min())
+            ax_left.contourf(X, Y, H_norm.T, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
+            ax_left.set_title("Evolving Sample Density")
+            ax_left.set_xlabel("x1")
+            ax_left.set_ylabel("x2")
+
+            time_text = fig.text(0.45, 0.92, '', fontsize=12, ha='center')
 
             def animate(frame):
-                curr = sample_seq[frame]
-                scatter.set_offsets(curr)
-                time_text.set_text(f'Step: {frame}/{self.cfg.K}')
-                return scatter, time_text
+                # clear only the left axis
+                ax_left.cla()
 
+                # recompute histogram for this frame
+                curr = sample_seq[frame]
+                H, _, _ = np.histogram2d(curr[:, 0], curr[:, 1], bins=200,
+                                        range=[[xmin, xmax], [ymin, ymax]], density=True)
+
+                # redraw contour on left axis
+                ax_left.contourf(X, Y, H.T, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
+                ax_left.set_title("Evolving Sample Density")
+                ax_left.set_xlabel("x1")
+                ax_left.set_ylabel("x2")
+
+                time_text.set_text(f"Step: {frame}/{self.cfg.K}")
+
+                return [time_text]
+            
             ani = animation.FuncAnimation(
                 fig=fig,
                 func=animate,
                 frames=self.cfg.K,
-                interval=20,
-                blit=True
+                interval=80,
+                blit=False
             )
+
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/sample_movement_{self.cfg.algo}.mp4'
+            fname = f"{self.cfg.results_dir}/sample_movement_{self.cfg.algo}_{figname}.mp4"
             ani.save(fname, writer=writer)
-            plt.close()
+            plt.close(fig)
 
         else:
             raise ValueError(f"Unsupported data_dim: {self.data_dim}")
@@ -356,10 +409,8 @@ class DDSAlgorithm(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.int32)
         self.params = self.model.init(sub, dummy_x, dummy_t)
 
-        # optimizer (Adam)
-        # self.opt = optax.adam(config.lr)
-        # add gradient clipping
-        self.opt = optax.chain(optax.clip(50.0), optax.adam(config.lr))
+        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
+        
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
         )
@@ -371,13 +422,19 @@ class DDSAlgorithm(BaseAlgorithm):
         self.loss_obj = self.make_loss()
 
     def make_loss(self):
-        return DDSLoss(add_score=self.cfg.add_score)
+        if self.cfg.use_true_score and self.cfg.target_dist == '1d':
+            return SupervisedScoreMatchingLoss(
+                mu = self.target_dist.mu, comp_sigmas= self.target_dist.sigma,
+                weights=jnp.exp(self.target_dist.log_w), ou=self.ou, data_dim=self.data_dim
+            )
+        else:
+            return DDSLoss(add_score=self.cfg.add_score)
     
     def mixture_score(self, y, k, mu, comp_sigmas, weights):
         """
         Compute the score function in OU process for 1d (isotropic) mixed-gaussian initial distribution.
         """
-        # y:   shape (batch)
+        # y:   of shape (batch)
         # k:   integer time index
         # mu:  array (n_comp, 1)
         # comp_sigmas: array (n_comp,)  # component std devs
@@ -393,7 +450,6 @@ class DDSAlgorithm(BaseAlgorithm):
         # Expand to match batch shape
         # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
         diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)               
-        # print(f"y shape:{y.shape}, diffs shape: {diffs.shape}, v_k shape: {v_k.shape}, weights shape: {weights.shape}, m_k shape: {m_k.shape}") 
         exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
                 / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
         pis   = weights[:, None, None] * exps      
@@ -402,12 +458,58 @@ class DDSAlgorithm(BaseAlgorithm):
         numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0) # (batch, 1)
         denom = jnp.sum(pis, axis=0) # (batch, 1)
     
-        # final score shape 
-        # print(f"numer shape: {numer.shape}, denom shape: {denom.shape}")
+
         return (numer / denom).reshape(-1)
 
+    def sample_forward(self, rng_key, num_samples):
+        """
+        Run the *forward* OU process from the mixed‐Gaussian (self.target_dist)
+        toward the stationary Gaussian (self.init_dist).
+        Returns:
+          sample_seq: jnp.ndarray of shape (K, num_samples, data_dim)
+        """
+        # unpack
+        alphas = self.ou.alpha          # shape (K,)
+        sigma  = self.ou.sigma         # scalar
 
+        # y₀ ~ target_dist (mixed Gaussian)
+        key, sub = jr.split(rng_key)
+        y = self.target_dist.sample(sub, num_samples)  # (num_samples, data_dim)
 
+        seq = [y]
+        for t in range(self.cfg.K):
+            key, sub = jr.split(key)
+            eps    = jr.normal(sub, y.shape)           # noise
+            alpha_t    = alphas[t]
+            sqrt1m = jnp.sqrt(1.0 - alpha_t)
+            # forward OU step
+            y = sqrt1m * y + sigma * jnp.sqrt(alpha_t) * eps
+            seq.append(y)
+
+        sample_seq = jnp.stack(seq[:-1], axis=0)  # shape (K, num_samples, data_dim)
+        return sample_seq
+
+    def visualize_forward(self, rng_key, num_samples):
+        """
+        propagate forward from mixed Gaussian -> approx standard Gaussian
+        call visualize_samples to animate that path,then swap init/target
+        """
+        # get the forward trajectory
+        sample_seq = self.sample_forward(rng_key, num_samples)
+
+        # swap init_dist <-> target_dist
+        orig_init   = self.init_dist
+        orig_target = self.target_dist
+        self.init_dist   = orig_target
+        self.target_dist = orig_init
+
+        # visualize
+        self.visualize_samples(sample_seq,figname="forward")
+
+        # restore
+        self.init_dist   = orig_init
+        self.target_dist = orig_target
+    
 class IDEMAlgorithm(BaseAlgorithm):
     """
     Implements the iDEM (Iterated Denoising Energy Matching).
@@ -454,6 +556,18 @@ class IDEMAlgorithm(BaseAlgorithm):
 
     def __init__(self, config):
         super().__init__(config) 
+
+        # Override the initial distribution
+        if config.add_drift:
+            # always converge to N(0,I)
+            self.init_dist = IsotropicGauss(
+                mu=jnp.zeros(self.data_dim), log_var=0.0
+            )
+        else:
+            self.init_dist = IsotropicGauss(
+                mu=jnp.zeros(self.data_dim), log_var=2*jnp.log(config.sigma_max)
+            )
+
         # Build the neural network (MLP or ResBlock)  
         if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=config.K)
@@ -484,14 +598,13 @@ class IDEMAlgorithm(BaseAlgorithm):
         self.score_fn = self.make_score_fn()
 
          
-        # Define geometric σ(t) inside this class:
-        #     σ(t) = σ_min * (σ_max/σ_min)^t      for t in [0,1]
-        sigma_min = 1e-2
-        sigma_max = 3.0
+        # Define linear σ(t) inside this class:
+        #     σ(t) = σ_max*t + σ_min*(1-t)      for t in [0,1]
+        sigma_min = config.sigma_min
+        sigma_max = config.sigma_max
 
         def sigma_fn(t):
-            ratio = sigma_max / sigma_min
-            return sigma_min * (ratio ** t)
+            return sigma_max * t + sigma_min * (1 - t)
 
         self.sigma_fn = sigma_fn
 
@@ -500,14 +613,23 @@ class IDEMAlgorithm(BaseAlgorithm):
         self.buffer = IDEMAlgorithm.ReplayBuffer.create(max_size=config.buffer_size,
                                   data_dim=self.data_dim)
 
+        ###################################
+        # for debugging, fill the buffer with initial samples from target_dist
+        if config.debug_fill_buffer:
+            print("Debug: filling the buffer with initial samples from target_dist")
+            key, sub = jr.split(key)
+            init_samples = self.target_dist.sample(sub, config.buffer_size)
+            self.buffer = self.buffer.add(init_samples)
+
 
          
         # Build the iDEM loss object
         self.loss_obj = self.make_loss()
 
     def make_loss(self):
-        return IDEMLoss(num_samples=10_000, sigma_fn=self.sigma_fn,buffer=self.buffer,\
-                         target_dist=self.target_dist, score_fn=self.score_fn)
+        return IDEMLoss(num_samples=self.cfg.num_samples_for_sk, sigma_fn=self.sigma_fn,
+                         target_dist=self.target_dist, score_fn=self.score_fn, total_step= self.cfg.K, 
+                         add_drift=self.cfg.add_drift, sample_t_weight=self.cfg.sample_t_weight)
 
     # override train function
     @partial(jax.jit, static_argnums=(0,))
@@ -515,27 +637,17 @@ class IDEMAlgorithm(BaseAlgorithm):
         inner_trainer = InnerTrainer(
         loss_obj=self.loss_obj,
         state=self.state,
-        batch_size=self.cfg.batch_size,
         inner_iters=self.cfg.inner_iters,
         )
 
-        init_carry = (
-            rng_key,
-            self.state,
-            self.buffer,
-            jnp.zeros((self.cfg.outer_iters,)), # logZ values
-            jnp.zeros((self.cfg.outer_iters,)), # logZ variances
-            jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters)), # all losses (outer_iters x inner_iters)
-            jnp.zeros((self.cfg.outer_iters, self.buffer.max_size, self.data_dim)), # buffer data (outer_iters x data_dim
-            jnp.zeros((self.cfg.outer_iters,)) # buffer size
-        )
 
         def scan_body(carry, idx):
-            key, state, buffer, logz_vals, logz_vars, all_losses, buffer_data, buffer_size = carry
+            key, state, buffer, logz_vals, logz_vars, all_losses, all_diff_true_ests, buffer_data, buffer_size = carry
 
             # sample & buffer update
             seq, _ = self.sample(state.params, key, self.cfg.num_samples_per_outer)
             new_x0s = seq[-1]
+            # print("new_x0s shape: {}", new_x0s.shape)
             buffer = buffer.add(new_x0s)
             # store the buffer data
             buffer_data = buffer_data.at[idx].set(buffer.data)
@@ -554,14 +666,33 @@ class IDEMAlgorithm(BaseAlgorithm):
             )
 
             # inner training step
-            state, key, losses = inner_trainer.run(key)
+            state, key, losses, diff_true_ests = inner_trainer.run(key, buffer)
+            # check the number of NaNs in losses
+            num_nans = jnp.isnan(losses).sum()
+            # jax.debug.print("Number of NaNs in losses at outer step {}: {}", idx, num_nans)
             all_losses = all_losses.at[idx].set(losses)
+            all_diff_true_ests = all_diff_true_ests.at[idx].set(diff_true_ests)
             jax.debug.print("Outer step {}, loss = {}", idx, losses.mean())
 
-            return (key, state, buffer, logz_vals, logz_vars, all_losses,buffer_data, buffer_size), None
+            return (key, state, buffer, logz_vals, logz_vars, all_losses, all_diff_true_ests, buffer_data, buffer_size), None
+
+
+        # re-initialize carry for main training loop
+        init_carry = (
+            rng_key,
+            self.state,
+            self.buffer,
+            jnp.zeros((self.cfg.outer_iters,)), # logZ values
+            jnp.zeros((self.cfg.outer_iters,)), # logZ variances
+            jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters)), # all losses (outer_iters x inner_iters)
+            jnp.zeros((self.cfg.outer_iters, self.cfg.inner_iters)), # all diff_true_ests (outer_iters x inner_iters)
+            jnp.zeros((self.cfg.outer_iters, self.buffer.max_size, self.data_dim)), # buffer data (outer_iters x data_dim
+            jnp.zeros((self.cfg.outer_iters,)) # buffer size
+        )
 
         # run the scan over indices 0..outer_iters-1
-        (key, state, buffer, logz_vals, logz_vars, all_losses,buffer_data, buffer_size), _ = \
+        print("Starting main training loop for {} outer steps...".format(self.cfg.outer_iters))
+        (key, state, buffer, logz_vals, logz_vars, all_losses, all_diff_true_ests, buffer_data, buffer_size), _ = \
                     jax.lax.scan(scan_body, init_carry, jnp.arange(self.cfg.outer_iters))
 
         # write back buffer and state
@@ -569,40 +700,53 @@ class IDEMAlgorithm(BaseAlgorithm):
         self.state = state
 
         flat_losses = all_losses.reshape(-1)
-        jax.debug.print("Training complete.")
-        return state, key, flat_losses, logz_vals, logz_vars,buffer_data, buffer_size
+        flat_diff_true_ests = all_diff_true_ests.reshape(-1)
+        return state, key, flat_losses, flat_diff_true_ests, logz_vals, logz_vars, buffer_data, buffer_size
 
     def sample(self, params, rng_key, num_samples: int):
         """
         Generate samples by running an annealed-Langevin reverse pass
         through the single-shot VE corruption x_t = x0 + sigma(t)*eps
+        and 1-order Euler‐Maruyama discretization with K steps.
         """
         @partial(jax.jit, static_argnums=(2))
         def generate(params, key, num_samples):
             key, sub = jr.split(key)
-            sigma1 = self.sigma_fn(1.0)
-            xT = jr.normal(sub, (num_samples, self.data_dim)) * sigma1
+            g0 = self.sigma_fn(0.0)
+            g1 = self.sigma_fn(1.0)
+            dt = 1.0 / self.cfg.K
+
+            sigma_T = jnp.sqrt(g0**2 + g0*(g1-g0) + (g1-g0)**2/3.0)
+            if self.cfg.add_drift:
+                xT = jr.normal(sub, (num_samples, self.data_dim))
+            
+            else:
+                xT = jr.normal(sub, (num_samples, self.data_dim)) * sigma_T
 
             #reverse step-indices
-            Ks = jnp.arange(self.cfg.K - 1, -1, -1)
+            Ks = jnp.arange(self.cfg.K, 0, -1)
 
             def body(carry, k):
                 x_next, key = carry
 
-                # compute exact variance drop Δσ² = σ(k/K)² – σ((k-1)/K)²
                 t_k   = k / self.cfg.K
-                sigma_k = self.sigma_fn(t_k)
-                t_km1 = jnp.maximum((k - 1) / self.cfg.K,0.0)
-                sigma_km1 = self.sigma_fn(t_km1)
-                delta_sq = sigma_k**2 - sigma_km1**2
+                g_k   = self.sigma_fn(t_k)       
 
-                # network score s_theta(x_t, t=k)
-                u = self.score_fn(params, k, x_next)  
+                # integrate g^2 over [t_{k-1}, t_k] by trapezoid:
+                delta_sigma = jnp.sqrt(g_k**2 * dt)
 
-                # one Langevin‐style reverse step
+                # score at (x_k, t_k)
+                u = self.score_fn(params, k, x_next)   # shape (N, data_dim)
+
+                # noise with sqrt(delta_sigma2)
                 key, sub = jr.split(key)
-                noise = jr.normal(sub, x_next.shape) * jnp.sqrt(2 * delta_sq)
-                x_prev = x_next + delta_sq * u + noise
+                noise = jr.normal(sub, x_next.shape) * delta_sigma
+
+                # reverse-time Euler step (note the minus sign)
+                if self.cfg.add_drift:
+                    x_prev = x_next + delta_sigma**2*(u + x_next/2) + noise
+                else:
+                    x_prev = x_next + delta_sigma**2 * u + noise
 
                 return (x_prev, key), (x_prev, u)
 
@@ -612,6 +756,8 @@ class IDEMAlgorithm(BaseAlgorithm):
                 (xT, key),
                 Ks
             )
+            # attach xT at the beginning of the sequence
+            seq = jnp.concatenate([xT[None, ...], seq], axis=0)
             return seq, score_seq
 
         return generate(params, rng_key, num_samples)
@@ -627,20 +773,17 @@ class IDEMAlgorithm(BaseAlgorithm):
             Returns:
             score:       array (batch,)    
         """
-        # ensure (batch,1)
-        y = jnp.atleast_2d(y)
-        if y.shape[-1] != 1:
-            y = y.reshape(-1, 1)
 
-        # current noise level
         t = t/ self.cfg.K  # normalize t to [0,1]
-        sigma_t = self.sigma_fn(t)
+        sigma_max = self.sigma_fn(1)
+        sigma_min = self.sigma_fn(0)
+        int_sigma = jnp.sqrt(1/3*t**3*(sigma_max-sigma_min)**2 + sigma_min*(sigma_max-sigma_min)*t**2\
+                             +sigma_min**2*t)
+        
 
         #   v_i = σ_i^2 + σ_t^2
-        v   = comp_sigmas**2 + sigma_t**2  # (n_comp,)
-
-        # build (n_comp, batch, 1) diffs
-        diffs = mu[:, None, :] - y[None, :, :]   # (n_comp, batch, 1)
+        v   = comp_sigmas**2 + int_sigma**2  
+        diffs = mu[:, None, :] - y[None, :, :]   
 
         # component pdfs: N(y | m_i, v_i) 
         v_e  = v[:, None, None]                             
@@ -653,6 +796,162 @@ class IDEMAlgorithm(BaseAlgorithm):
         denom = jnp.sum(pis, axis=0)                           # (batch,1)
 
         return (numer / denom).reshape(-1)                     # (batch,)
+
+    def sample_xT_from_mixture(self, key, num_samples, mu, comp_sigmas, weights, delta_T):
+        '''
+        Sample x_T from the true p1
+        '''
+        n_comp = mu.shape[0]
+        key, sub1, sub2 = jr.split(key, 3)
+        # choose components
+        comp_ids = jr.choice(sub1, n_comp, shape=(num_samples,), p=weights)
+        # component means and variances
+        means = mu[comp_ids].squeeze()
+        vars  = comp_sigmas[comp_ids]**2 + delta_T
+        stds  = jnp.sqrt(vars)
+        # sample
+        eps = jr.normal(sub2, (num_samples,))
+        xT  = means + stds * eps
+        return xT.reshape(-1,1)
+
+
+    def true_score(self, x_t, step, mu, comp_sigmas, weights):
+        '''
+        Exact score for 1d mixed-isotropic Gaussian mixture at time t.
+        '''
+        # current noise level
+        t = step / self.cfg.K  # normalize t to [0,1]
+        sigma_max = self.sigma_fn(1)
+        sigma_min = self.sigma_fn(0)
+        int_sigma = jnp.sqrt(1/3*t**3*(sigma_max-sigma_min)**2 + sigma_min*(sigma_max-sigma_min)*t**2\
+                            +sigma_min**2*t) # constant * t
+
+        #   v_i = σ_i^2 + σ_t^2
+        v   = comp_sigmas**2 + int_sigma**2  
+        diffs = mu.flatten() - x_t        # (n_comp,)
+        norm  = jnp.sqrt(2 * jnp.pi * v)
+        exps  = jnp.exp(-0.5 * (diffs**2) / v) / norm
+
+        # unnormalized component responsibilities
+        pis = weights * exps              # (n_comp,)
+
+        # numerator and denominator for score
+        numer = jnp.sum(pis * (diffs / v))
+        denom = jnp.sum(pis)
+        denom = jnp.clip(denom, 1e-10, jnp.inf)
+
+        #################################
+        # test which value is nan
+        # jax.debug.print("pis: {}", pis)
+        # jax.debug.print("diffs: {}", diffs)
+        # jax.debug.print("exps: {}", exps)
+
+        return numer / denom
+
+    # run the backward diffusion with the true score
+    def sample_backward_true(self, rng_key, num_samples):
+        '''
+        run the backward diffusion with the true score:
+        x_{k-1} = x_k - delta_sigma^2 * true_score(x_k, k) + noise
+        '''
+        @partial(jax.jit, static_argnums=(1,))
+        def generate(key, num_samples):
+            key, sub = jr.split(key)
+            g0 = self.sigma_fn(0.0)
+            g1 = self.sigma_fn(1.0)
+            dt = 1.0 / self.cfg.K
+
+            sigma_T = jnp.sqrt(g0**2 + g0*(g1-g0) + (g1-g0)**2/3.0)
+            xT = jr.normal(sub, (num_samples, self.data_dim)) * sigma_T
+            # xT = self.sample_xT_from_mixture(sub, num_samples, 
+            #     self.target_dist.mu, 
+            #     jnp.sqrt(jnp.exp(self.target_dist.log_var)), 
+            #     jnp.exp(self.target_dist.log_w), 
+            #     sigma_T**2)  
+
+            #reverse step-indices
+            Ks = jnp.arange(self.cfg.K, 0, -1)
+
+            def body(carry, k):
+                x_next, key = carry
+                t_k   = k / self.cfg.K
+                g_k   = self.sigma_fn(t_k) # constant
+
+                delta_sigma = jnp.sqrt(g_k**2 * dt)
+
+                # score at (x_k, t_k)
+                true_score = jax.vmap(self.true_score, in_axes=(0, None, None, None, None))
+                u = true_score(x_next.squeeze(-1), k, self.target_dist.mu, self.target_dist.sigma, jnp.exp(self.target_dist.log_w))
+                u = u.reshape(-1,1)
+
+                key, sub = jr.split(key)
+                noise = jr.normal(sub, x_next.shape) * delta_sigma
+
+                # reverse-time Euler step
+                x_prev = x_next + delta_sigma**2 * u + noise
+
+                return (x_prev, key), (x_prev, u)
+
+            # run the reverse chain
+            (x0, _), (seq, score_seq) = jax.lax.scan(
+                body,
+                (xT, key),
+                Ks
+            )
+            # attach xT at the beginning of the sequence
+            seq = jnp.concatenate([xT[None, ...], seq], axis=0)
+            return seq, score_seq
+
+        return generate(rng_key, num_samples)
+    
+    def sample_forward(self, rng_key, num_samples):
+        '''
+        Run the forward OU process(dxt = \sigma * dW) from the mixed‐Gaussian (self.target_dist)
+        toward the stationary Gaussian (self.init_dist).
+        Returns:
+          sample_seq: jnp.ndarray of shape (K, num_samples, data_dim)
+        '''
+        dt = self.cfg.T / self.cfg.K
+
+        key, sub = jr.split(rng_key)
+        x0 = self.target_dist.sample(sub, num_samples)
+        seq = [x0]
+        x_curr = x0
+
+        for k in range(self.cfg.K):
+            key, sub = jr.split(key)
+
+            # diffuse x_curr by dxt = \sigma(t) * dW
+            sigma_t = jnp.sqrt(self.sigma_fn(k * dt) * dt)
+            x_next = x_curr + jr.normal(sub, x_curr.shape) * sigma_t
+            seq.append(x_next)
+            x_curr = x_next
+
+        sample_seq = jnp.stack(seq[:-1], axis=0)  # shape (K, num_samples, data_dim)
+        return sample_seq
+
+    def visualize_forward(self, rng_key, num_samples):
+        """
+        propagate forward from mixed Gaussian -> approx standard Gaussian
+        call visualize_samples to animate that path,then swap init/target
+        """
+        # get the forward trajectory
+        sample_seq = self.sample_forward(rng_key, num_samples)
+
+        # swap init_dist <-> target_dist
+        # Here we take sigma as constant
+        orig_init   = self.init_dist
+        orig_target = self.target_dist
+        self.init_dist  = orig_target
+        self.target_dist = IsotropicGauss(mu = jnp.zeros(1), log_var=jnp.log(self.cfg.T)+2*jnp.log(self.cfg.sigma_max))
+
+        # visualize
+        self.visualize_samples(sample_seq,figname="forward")
+
+        # restore
+        self.init_dist   = orig_init
+        self.target_dist = orig_target
+
 
 class PISAlgorithm(BaseAlgorithm):
     def __init__(self, config):
@@ -688,7 +987,7 @@ class PISAlgorithm(BaseAlgorithm):
     @partial(jax.jit, static_argnums=(0, 3))
     def sample(self, params, rng_key, num_samples: int):
         """Forward SDE simulation with learned control"""
-        T_total = 1.0  
+        T_total = self.cfg.T
         delta_t = T_total / self.cfg.K
         
         key, sub = jr.split(rng_key)
@@ -725,7 +1024,7 @@ class PISAlgorithm(BaseAlgorithm):
         Estimate log normalizing constant using Girsanov's theorem
         for the controlled forward SDE.
         """
-        T_total = 1.0  # Total simulation time
+        T_total = self.cfg.T  # Total simulation time
         delta_t = T_total / self.cfg.K
         
         key, sub = jr.split(key)
@@ -776,22 +1075,18 @@ class PISAlgorithm(BaseAlgorithm):
 
     def mixture_score(self, y, k, mu, comp_sigmas, weights):
         """
-        Exact score for 1d mixed-isotropic Gaussian mixture at time t.
+        Exact score for 1d mixed-isotropic Gaussian mixture at timestep k.
             y:           array (batch,) or (batch,1)
-            t:           scalar in [0,1]
+            k:           integer time index in [0, K-1]
             mu:          array (n_comp, 1)
             comp_sigmas: array (n_comp,)    # sigma_i of each mixture component
             weights:     array (n_comp,)    # mixture weights w_i
             Returns:
             score:       array (batch,)    
         """
-        # ensure (batch,1)
-        y = jnp.atleast_2d(y)
-        if y.shape[-1] != 1:
-            y = y.reshape(-1, 1)
 
         # time step and total variance from Brownian increments
-        dt = 1.0 / self.cfg.K
+        dt = self.cfg.T / self.cfg.K
         var_noise = k * dt             
 
         # component variances at step k: σ_i^2 + var_noise
@@ -812,7 +1107,46 @@ class PISAlgorithm(BaseAlgorithm):
 
         return (numer / denom).reshape(-1)                     # (batch,)
 
+    def sample_forward(self, rng_key, num_samples):
+        """
+        Run the *forward* OU process from the mixed‐Gaussian (self.target_dist)
+        toward the stationary Gaussian (self.init_dist).
+        Returns:
+          sample_seq: jnp.ndarray of shape (K, num_samples, data_dim)
+        """
+        # y₀ ~ target_dist (mixed Gaussian)
+        key, sub = jr.split(rng_key)
+        y = self.target_dist.sample(sub, num_samples)  # (num_samples, data_dim)
+        dt = self.cfg.T / self.cfg.K  # time step
+        seq = [y]
+        for t in range(self.cfg.K):
+            key, sub = jr.split(key)
+            eps = jr.normal(sub, y.shape)  # noise
+            y = y + jnp.sqrt(dt) * eps
+            seq.append(y)
+        return jnp.stack(seq)
 
+    def visualize_forward(self, rng_key, num_samples):
+        """
+        propagate forward from mixed Gaussian -> approx standard Gaussian
+        call visualize_samples to animate that path,then swap init/target
+        """
+
+        # get the forward trajectory
+        sample_seq = self.sample_forward(rng_key, num_samples)
+
+        # swap init_dist <-> target_dist
+        orig_init   = self.init_dist
+        orig_target = self.target_dist
+        self.init_dist   = orig_target
+        self.target_dist = orig_init
+
+        # visualize
+        self.visualize_samples(sample_seq,figname="forward")
+
+        # restore
+        self.init_dist   = orig_init
+        self.target_dist = orig_target
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
     """
@@ -870,7 +1204,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
                     + alpha  * self.target_dist.grad_batch(x)
                 drift = self.ou.sigma**2 * gradp + u
                 key, sub = jr.split(key)
-                noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
+                noise = jr.normal(sub, x.shape) * jnp.sqrt(2 * self.ou.sigma**2 * delta_t)
                 x_new = x + drift * delta_t + noise
                 return (x_new, key), (x_new,u)
 
@@ -885,42 +1219,62 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
         """
-        Use importance sampling with the log-ratio from CMCDLoss.
-        logZ ≈ logmeanexp(log_ratio)
+        Importance sampling estimator of logZ.
+        logZ ≈ logmeanexp(log_ratio) with log_ratio defined as in eq. (24).
         """
-        # Reuse the same scan as in CMCDLoss but return all log_ratios
+        K = self.ou.K
+        delta_t = 1.0 / K
+        sigma2 = self.ou.sigma**2
+        var = 2.0 * sigma2 * delta_t
+
         key, sub = jr.split(key)
-        x = self.init_dist.sample(sub, num_samples)
-        log_ratio = jnp.zeros(num_samples)
-        delta_t = 1.0 / self.ou.K
+        x0 = self.init_dist.sample(sub, num_samples)
+        log_ratio = -self.init_dist.batch(x0)  # -log π0(x0)
+
         def body(carry, t):
             x, lr, key = carry
+            key, sub = jr.split(key)
+
+            # continuous/normalized time
+            t_norm = t.astype(jnp.float32) / jnp.float32(K)
+
+            # current control and score
             u = self.score_fn(params, t, x)
-            gradp = self.target_dist.grad_batch(x)
-            mu_fwd = x + (self.ou.sigma**2 * gradp + u) * delta_t
-            factor = -1.0 if self.loss_obj.use_ctrl_den else 0.0
-            mu_bwd = x + (self.ou.sigma**2 * gradp + factor * u) * delta_t
-            # log p forward/backward
+            gradp = (1.0 - t_norm) * self.init_dist.grad_batch(x) \
+                    + t_norm * self.target_dist.grad_batch(x)
+
+            # forward step
+            mu_fwd = x + (sigma2 * gradp + u) * delta_t
+            noise = jr.normal(sub, x.shape) * jnp.sqrt(var)
+            x_next = mu_fwd + noise
+
+            # next control/score for backward mean
+            t_next = (t+1).astype(jnp.float32) / jnp.float32(K)
+            u_next = self.score_fn(params, t+1, x_next)
+            gradp_next = (1.0 - t_next) * self.init_dist.grad_batch(x_next) \
+                        + t_next * self.target_dist.grad_batch(x_next)
+
+            mu_bwd = x_next + (sigma2 * gradp_next - u_next) * delta_t
+
+            # log forward/backward densities
             def log_gauss(x, mu):
-                var = 2 * (self.ou.sigma**2) * delta_t
                 D = x.shape[-1]
-                norm = -0.5 * (D * jnp.log(2*jnp.pi*var))
+                norm = -0.5 * D * jnp.log(2 * jnp.pi * var)
                 quad = -0.5 * jnp.sum((x - mu)**2, axis=-1) / var
                 return norm + quad
-            log_pfwd = log_gauss(x, mu_fwd)
+
+            log_pfwd = log_gauss(x_next, mu_fwd)
             log_pbwd = log_gauss(x, mu_bwd)
-            lr = lr + (log_pfwd - log_pbwd)
-            key, sub = jr.split(key)
-            noise = jr.normal(sub, x.shape) * jnp.sqrt(delta_t)
-            x = mu_fwd + noise
-            return (x, lr, key), None
-        times = jnp.arange(self.ou.K, dtype=jnp.float32) * (1.0 / self.ou.K)
-        (xT, log_ratio, _), _ = jax.lax.scan(body, (x, log_ratio, key), times)
-        # add endpoint
-        log_qT = self.ou.log_marginal(xT, self.ou.K)
-        log_p  = self.target_dist.batch(xT)
-        log_ratio = log_ratio + log_qT - log_p
-        # estimate logZ
-        M = log_ratio.shape[0]
-        sum_log = logsumexp(log_ratio)        
-        return sum_log - jnp.log(M)
+
+            lr = lr + (log_pbwd - log_pfwd)
+            return (x_next, lr, key), None
+
+        steps = jnp.arange(K)
+        (xT, log_ratio, _), _ = jax.lax.scan(body, (x0, log_ratio, key), steps)
+
+        # endpoint correction
+        log_pT = self.target_dist.batch(xT)
+        log_ratio = log_ratio + log_pT
+
+        sum_log = logsumexp(log_ratio)
+        return sum_log - jnp.log(num_samples)

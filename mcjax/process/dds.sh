@@ -18,12 +18,13 @@ add_score=true # Add score term to the loss function
 
 # ----------- Process parameters -----------
 variable_ts=true # Use variable time steps
-K=2000 # Number of steps in the process
+K=500 # Number of steps in the process
+T=1 # Time
 sigma=1.0 # Noise scale for the backward process
 
 # ---------- Training parameters -----------
 lr=0.0001 # Learning rate
-batch_size=128 # Batch size
+batch_size=64 # Batch size
 num_steps=1000 # Number of steps for training
 if_logZ=false # calculate logZ during training
 model_path='model_params.pkl'
@@ -40,6 +41,7 @@ python dds.py \
   --add_score $add_score  \
   --variable_ts $variable_ts \
   --K $K \
+  --T $T \
   --sigma $sigma \
   --lr $lr \
   --batch_size $batch_size \

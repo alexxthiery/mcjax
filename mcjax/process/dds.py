@@ -99,7 +99,7 @@ def generate_samples(params, score_fn, ou, num_samples, key):
 
     def body(carry, k):
         y_next, key = carry
-        key, y_k = ou.reverse_step(key, y_next, k, score_fn, params)
+        key, y_k, _ = ou.reverse_step(key, y_next, k, score_fn, params)
         return (y_k, key), y_k
 
     # scan backwards
@@ -182,6 +182,7 @@ if __name__ == "__main__":
     parser.add_argument('--add_score', type=str2bool, default=False) # True if adding the score term(with zero mean) in loss function
     parser.add_argument('--variable_ts', type=str2bool, default=False) # True if using variable (i.e. non-equidistant) timesteps for the diffusion process  
     parser.add_argument('--K', type=int, default=2000) # number of diffusion steps
+    parser.add_argument('--T', type=int, default=1) # Time
     parser.add_argument('--sigma', type=float, default=1.0) # sigma of the OU process
     parser.add_argument('--lr', type=float, default=1e-3) # learning rate
     parser.add_argument('--batch_size', type=int, default=128) # batch size
@@ -202,6 +203,7 @@ if __name__ == "__main__":
     add_score = args.add_score
     variable_ts = args.variable_ts
     K = args.K
+    T = args.T
     ou_sigma = args.sigma
     learning_rate = args.lr
     batch_size = args.batch_size
@@ -223,12 +225,15 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown target distribution: {target}")
     
     timesteps = jnp.arange(K, dtype=jnp.float32)
+    #######################
+    # Always set this to false: No need to use variable time steps 
     if variable_ts:
         beta_start, beta_end = 0.1, 20.0
         beta = beta_start + (beta_end - beta_start) * (timesteps / (K - 1))
+    #########################
     else:
-        # beta all set to 1/2
-        beta = jnp.ones(K) * 0.5
+        # beta all set to 1
+        beta = jnp.ones(K) * 1.0
     
     alpha = 1.0 - jnp.exp(-2.0 * beta / K)
 
@@ -236,7 +241,7 @@ if __name__ == "__main__":
     init_dist = IsotropicGauss(mu=jnp.zeros(data_dim), log_var=0.0)
 
     # Define the dynamic of the process
-    ou = OU(alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
+    ou = OU(T=T, alpha=alpha, sigma=ou_sigma, init_dist=init_dist)
     # Define the network
     if network_name == 'mlp':
         model = MLPModel(dim=data_dim, T=K)

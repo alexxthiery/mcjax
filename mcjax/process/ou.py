@@ -17,10 +17,12 @@ class OU:
     plus an injectable reverse-process sampler.
     """
     def __init__(self,
+                 T: int,  # total time
                  alpha: jnp.ndarray, # array of shape (K,), where alpha[k] = 1 - exp(-2 ∫β_s ds) over step k
                  sigma: float,
                  init_dist: LogDensity):
 
+        self.T = T
         self.alpha = alpha
         self.sigma = sigma
         self.sqrt_1m_alpha = jnp.sqrt(1.0 - alpha)
@@ -83,6 +85,7 @@ class OU:
         # Initialize carry with (y_K = x1, PRNG key)
         (y0, _key) = jax.lax.fori_loop(0, self.K, body, (x1, key))
         return y0
+
     
     
     def log_marginal(self, x: jnp.ndarray, k: int) -> jnp.ndarray:

@@ -3,17 +3,23 @@
 # ----------- Parameter settings -----------
 ############################################
 
-algo='pis' 
-target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; '1d': 1-d Gaussian Mixture Model； 'funnel': 2-d Funnel distribution
+algo='mcd' # 'dds'： Denoising Diffusion Sampling; 
+            # 'pis':path integral sampler; 
+            #'idem': Iterative Denoising Estimation Method; 
+            # 'mcd': Monte Carlo Denoising(Set use_control_in_denominator to true for CMCD, false for MCD)
+target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; 'gmmfixed': Fixed 2-d gaussian with 9 components;
+                #'1d': 1-d Gaussian Mixture Model； 
+                # 'funnel': 2-d Funnel distribution
 network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
 condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
 add_score=true # Add score term to the loss function
-variable_ts=true # Use variable time steps
-K=100 # Number of steps in the process ########### reduce k
+variable_ts=false # Use variable time steps; Always set this to false: No need to use variable time steps 
+K=200 # Number of steps in the process 
+T=1 # Time 
 sigma=1.0 # Noise scale for the backward process
 lr=0.0005 # Learning rate
-batch_size=128 # Batch size
-num_steps=2000 # Number of steps for training
+batch_size=1000 # Batch size
+num_steps=1000 # Number of steps for training
 if_logZ=true # calculate logZ during training
 seed=42 # Random seed for reproducibility
 if_train=true # Whether to train the model
@@ -21,12 +27,27 @@ if_animation=true # Generate animation of the backward process
 model_path='model_params.pkl' # Path to save the model parameters
 results_dir='results' # Path to save the results
 
-buffer_size=5000 # Buffer size for the training data in IDEM algorithm
-inner_iters=200 # Number of inner steps for the IDEM algorithm
-outer_iters=200 # Number of outer steps for the IDEM algorithm
+############################################
+# ----------- For IDEM -----------
+sigma_min=1.0 # Minimum noise scale for the IDEM algorithm
+sigma_max=1.0 # Maximum noise scale for the IDEM algorithm
+buffer_size=2000 # Buffer size for the training data in IDEM algorithm
+inner_iters=1000 # Number of inner steps for the IDEM algorithm
+outer_iters=5 # Number of outer steps for the IDEM algorithm
 num_samples_per_outer=1000 # Number of samples per outer step for the IDEM algorithm
+draw_buffer_interval=10 # Interval for drawing buffer histograms
+num_samples_for_sk=10000 # Number of samples for estimating S_K in IDEM algorithm
+debug_fill_buffer=true # Fill the buffer with samples from the target distribution for debugging
+backdiffusion_true_score=true # Use true score function for backdiffusion in IDEM (only available for 1d mixed-gaussian target distribution)
 
-use_control_in_denominator=false # True for CMCD, False for MCD
+############################################
+# ----------- For MCD -----------
+use_control_in_denominator=true # True for CMCD, False for MCD
+
+############################################'
+# ------------ For debugging ---------------
+use_true_score=false # Use true score function for debugging (only available for 1d mixed-gaussian target distribution)'
+visualize_forward=false # Visualize the forward process (from mixed Gaussian to approx standard Gaussian)
 
 
 python main.py \
@@ -37,6 +58,7 @@ python main.py \
     --add_score $add_score \
     --variable_ts $variable_ts \
     --K $K \
+    --T $T \
     --sigma $sigma \
     --lr $lr \
     --batch_size $batch_size \
@@ -47,9 +69,17 @@ python main.py \
     --if_animation $if_animation \
     --model_path $model_path \
     --results_dir $results_dir \
+    --sigma_min $sigma_min \
+    --sigma_max $sigma_max \
     --buffer_size $buffer_size \
     --inner_iters $inner_iters \
     --outer_iters $outer_iters \
     --num_samples_per_outer $num_samples_per_outer \
-    --use_control_in_denominator $use_control_in_denominator
+    --draw_buffer_interval $draw_buffer_interval \
+    --num_samples_for_sk $num_samples_for_sk \
+    --debug_fill_buffer $debug_fill_buffer \
+    --backdiffusion_true_score $backdiffusion_true_score \
+    --use_control_in_denominator $use_control_in_denominator \
+    --use_true_score $use_true_score \
+    --visualize_forward $visualize_forward
   
