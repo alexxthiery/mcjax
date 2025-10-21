@@ -389,12 +389,26 @@ class CMCDLoss(BaseLoss):
 
         # vectorize over k
         ks = jnp.arange(n_steps)
-        trans_terms = jax.vmap(per_step)(ks)     
+        trans_terms = jax.vmap(per_step)(ks)  
         trans_sum = jnp.sum(trans_terms, axis=0) 
+        # jax.debug.print("trans_terms: {t}", t=trans_terms)
 
         # endpoints
         log_pT = target_dist.batch(xK)    
         log_ratio = log_p0 - log_pT + trans_sum  
+        # test if x, log_pT or trans_sum contain NaNs (jax.cond)
+        # jax.debug.print("x = {x}", x=states[:,14,:])
+        # jax.debug.print("gradpT = {g}", g=gradps[:,14,:])
+        # jax.debug.print("size = {s}", s=states.shape)
+
+        # jax.lax.cond(jnp.any(jnp.isnan(states)), lambda: jax.debug.print("x contains NaNs"), lambda: None)
+        # jax.lax.cond(jnp.any(jnp.isnan(log_pT)), lambda: jax.debug.print("log_pT contains NaNs"), lambda: None)
+        # jax.lax.cond(jnp.any(jnp.isnan(trans_sum)), lambda: jax.debug.print("trans_sum contains NaNs"), lambda: None)
+        # inspect states (print one element in the batch)
+        # jax.debug.print("x: {x}", x=states[:,0,:])
+        # jax.debug.print("gradp_t: {g}", g=gradps[:,0,:])
+        # jax.debug.print("u_t: {u}", u=controls[:,0,:])
+
 
         return jnp.mean(log_ratio)
 

@@ -7,25 +7,27 @@ algo='mcd' # 'dds'： Denoising Diffusion Sampling;
             # 'pis':path integral sampler; 
             #'idem': Iterative Denoising Estimation Method; 
             # 'mcd': Monte Carlo Denoising(Set use_control_in_denominator to true for CMCD, false for MCD)
-target_dist='1d' # 'gmm40': 40-component Gaussian Mixture Model; 'gmmfixed': Fixed 2-d gaussian with 9 components;
+target_dist='doublewell' # 'gmm40': 40-component Gaussian Mixture Model; 'gmmfixed': Fixed 2-d gaussian with 9 components;
                 #'1d': 1-d Gaussian Mixture Model； 
-                # 'funnel': 2-d Funnel distribution
+                # 'funnel': 2-d Funnel distribution;
+                # 'doublewell': Double Well potential distribution
 network_name='resblock' # 'mlp': Multi-Layer Perceptron;  'resblock': ResBlock model
 condition_term='grad_score' # 'grad_score': concatenate \nabla log p_target; 'score': concatenate log p_target; 'none': no condition term;
 add_score=true # Add score term to the loss function
 variable_ts=false # Use variable time steps; Always set this to false: No need to use variable time steps 
 K=200 # Number of steps in the process 
 T=1 # Time 
-sigma=1.0 # Noise scale for the backward process
-lr=0.0005 # Learning rate
+sigma=0.3 # Noise scale for the backward process
+lr=1e-5 # Learning rate
 batch_size=1000 # Batch size
-num_steps=1000 # Number of steps for training
+num_steps=10 # Number of steps for training
 if_logZ=true # calculate logZ during training
-seed=42 # Random seed for reproducibility
+seed=0 # Random seed for reproducibility
 if_train=true # Whether to train the model
-if_animation=true # Generate animation of the backward process
 model_path='model_params.pkl' # Path to save the model parameters
 results_dir='results' # Path to save the results
+do_visualization=true # Whether to do visualization at the end of training
+write_logZ=false # Whether to write logZ to txt file
 
 ############################################
 # ----------- For IDEM -----------
@@ -66,7 +68,6 @@ python main.py \
     --if_logZ $if_logZ \
     --seed $seed \
     --if_train $if_train \
-    --if_animation $if_animation \
     --model_path $model_path \
     --results_dir $results_dir \
     --sigma_min $sigma_min \
@@ -81,5 +82,7 @@ python main.py \
     --backdiffusion_true_score $backdiffusion_true_score \
     --use_control_in_denominator $use_control_in_denominator \
     --use_true_score $use_true_score \
-    --visualize_forward $visualize_forward
+    --visualize_forward $visualize_forward \
+    --do_visualization $do_visualization \
+    --write_logZ $write_logZ
   

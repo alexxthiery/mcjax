@@ -17,6 +17,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40, GMMFixed
+from mcjax.proba.doublewell import DoubleWell
 from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss, SupervisedScoreMatchingLoss
 from trainer import Trainer, InnerTrainer
 from mcjax.proba.sonar import BayesianLogisticTarget
@@ -55,6 +56,12 @@ class BaseAlgorithm(ABC):
         elif config.target_dist == 'gmmfixed':
             self.target_dist = GMMFixed()
             self.data_dim = 2
+        elif config.target_dist == 'doublewell':
+            self.target_dist = DoubleWell(dim=5, m=5, delta=4.0)
+            self.data_dim = 5
+        elif config.target_dist == 'doublewell2': # higher dimension
+            self.target_dist = DoubleWell(dim=50, m=5, delta=2.0)
+            self.data_dim = 50
         elif config.target_dist == '1d':
             mu = jnp.array([[-1.],[1.]])
             dist_sigma = jnp.array([0.5,0.6])
@@ -125,6 +132,7 @@ class BaseAlgorithm(ABC):
         target = self.target_dist
 
         def score_fn(params, k, y):
+
             # k: int index in [0, K-1], y: shape (batch, data_dim)
             batch_k = jnp.full((y.shape[0],), k, dtype=jnp.int32)
             nn1, nn2 = self.model.apply(params, y, batch_k)
@@ -301,7 +309,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/density_evolution_{self.cfg.algo}_{figname}.mp4'
+            fname = f'{self.cfg.results_dir}/{self.cfg.target_dist}/density_evolution_{self.cfg.algo}_{figname}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
@@ -379,7 +387,7 @@ class BaseAlgorithm(ABC):
             )
 
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f"{self.cfg.results_dir}/sample_movement_{self.cfg.algo}_{figname}.mp4"
+            fname = f"{self.cfg.results_dir}/{self.cfg.target_dist}/sample_movement_{self.cfg.algo}_{figname}.mp4"
             ani.save(fname, writer=writer)
             plt.close(fig)
 
@@ -1167,7 +1175,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(key, dummy_x, dummy_t)
 
-        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
+        self.opt = optax.chain(optax.clip(50.0), optax.clip_by_global_norm(1.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=self.params,
@@ -1276,5 +1284,4 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         log_pT = self.target_dist.batch(xT)
         log_ratio = log_ratio + log_pT
 
-        sum_log = logsumexp(log_ratio)
-        return sum_log - jnp.log(num_samples)
+        return log_ratio

@@ -12,6 +12,8 @@ import sys
 sys.path.append('../../')
 import time
 from scipy.stats import gaussian_kde
+import pandas as pd
+import glob, os
 
 from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm, ControlledMonteCarloDiffusion
 from metrics import MMD_squared,two_wasserstein
@@ -26,23 +28,22 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Neural Sampler Experiments")
     parser.add_argument("--algo",       type=str, default="dds",
                         choices=["dds", "pis", "idem", "mcd", "cmcd"])
-    parser.add_argument("--target_dist",     type=str, default="gmm40")
-    parser.add_argument("--network_name", type=str, default="mlp",
+    parser.add_argument("--target_dist",  type=str, default="1d")
+    parser.add_argument("--network_name", type=str, default="resblock",
                         choices=["mlp", "resblock"])
     parser.add_argument("--condition_term", type=str, default="grad_score",
                         choices=["none", "score", "grad_score"])
-    parser.add_argument('--add_score', type=str2bool, default=False) 
+    parser.add_argument('--add_score', type=str2bool, default=True) 
     parser.add_argument('--variable_ts', type=str2bool, default=False)  
-    parser.add_argument("--K",          type=int, default=2000)
+    parser.add_argument("--K",          type=int, default=200)
     parser.add_argument("--T",          type=int, default=1)  
     parser.add_argument("--sigma",      type=float, default=1.0)
     parser.add_argument("--lr",         type=float, default=1e-4)
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--num_steps",  type=int, default=1000)
-    parser.add_argument("--if_logZ",    type=str2bool, default=False)
+    parser.add_argument("--if_logZ",    type=str2bool, default=True)
     parser.add_argument("--seed",       type=int, default=42)
-    parser.add_argument("--if_train",   type=str2bool, default=False)
-    parser.add_argument("--if_animation", type=str2bool, default=True)
+    parser.add_argument("--if_train",   type=str2bool, default=True)
     parser.add_argument("--model_path", type=str, default="model_params.pkl")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument("--sigma_min",  type=float, default=0.5)
@@ -55,11 +56,11 @@ def parse_args():
     parser.add_argument("--num_samples_for_sk", type=int, default=10000)
     parser.add_argument("--debug_fill_buffer", type=str2bool, default=False)
     parser.add_argument("--backdiffusion_true_score", type=str2bool, default=False)
-    parser.add_argument("--add_drift", type=str2bool, default=True)
-    parser.add_argument("--sample_t_weight", type=str2bool, default=True)
-    parser.add_argument("--use_control_in_denominator", type=str2bool, default=False)
+    parser.add_argument("--use_control_in_denominator", type=str2bool, default=True)
     parser.add_argument("--use_true_score", type=str2bool, default=False)
     parser.add_argument("--visualize_forward", type=str2bool, default=False)
+    parser.add_argument("--do_visualization", type=str2bool, default=True)
+    parser.add_argument("--write_logZ", type=str2bool, default=True)
     return parser.parse_args()
 
 
@@ -68,6 +69,9 @@ def main():
     # create results_dir if not exist
     if not os.path.exists(args.results_dir):
         os.makedirs(args.results_dir)
+    # create models dir if not exist
+    if not os.path.exists("models"):
+        os.makedirs("models")
 
     # Choose algorithm class
     if args.algo == "dds":
@@ -82,6 +86,11 @@ def main():
         raise NotImplementedError(f"Algorithm {args.algo} not supported yet.")
 
     alg = AlgoClass(config=args)
+
+    # create target_dist results dir if not exist
+    target_results_dir = f"{args.results_dir}/{args.target_dist}"
+    if not os.path.exists(target_results_dir):
+        os.makedirs(target_results_dir)
 
     if args.visualize_forward and args.target_dist == "1d":
         # Visualize the forward process from mixed Gaussian to approx standard Gaussian
@@ -121,8 +130,8 @@ def main():
         plt.xlabel("step")
         plt.ylabel("loss")
         plt.legend()
-        plt.title(f"{args.algo} training loss")
-        plt.savefig(f"{args.results_dir}/{args.algo}_loss.png")
+        plt.title(f"{args.algo} training loss K={args.K} steps={args.num_steps}")
+        plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_loss.png")
         plt.close()
 
         if args.algo == "idem" and args.target_dist == "1d":
@@ -141,7 +150,7 @@ def main():
                 plt.title(f"Buffer data at step {i}")
                 plt.xlabel("x")
                 plt.ylabel("Density")
-                plt.savefig(f"{args.results_dir}/{args.algo}_buffer_step_{i}.png")
+                plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_buffer_step_{i}.png")
                 plt.close()
             # plot the final buffer data
             plt.figure()
@@ -149,7 +158,7 @@ def main():
             plt.title(f"Final Buffer data at step {len(buffer_data)}")
             plt.xlabel("x")
             plt.ylabel("Density")
-            plt.savefig(f"{args.results_dir}/{args.algo}_buffer_step_{len(buffer_data)}.png")
+            plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_buffer_step_{len(buffer_data)}.png")
             plt.close()
 
             # plot diff_true_ests curve
@@ -159,7 +168,7 @@ def main():
             plt.ylabel("diff_true_est")
             plt.legend()
             plt.title(f"{args.algo} diff_true_est")
-            plt.savefig(f"{args.results_dir}/{args.algo}_diff_true_est.png")
+            plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_diff_true_est.png")
             plt.close()
 
         # Plot logZ (if computed)
@@ -177,12 +186,31 @@ def main():
             ax2.set_ylabel("mean(logZ)", color='C1')
             ax2.tick_params(axis='y', labelcolor='C1')
 
+            # plot the horizontal line for true logZ
+            ax2.axhline(y=alg.target_dist.log_Z(), color='C2', linestyle='--', label="true logZ")
+
             lines, labels = ax1.get_legend_handles_labels()
             l2, lbl2 = ax2.get_legend_handles_labels()
             ax1.legend(lines + l2, labels + lbl2, loc='upper left')
-            plt.title(f"{args.algo} logZ statistics")
-            plt.savefig(f"{args.results_dir}/{args.algo}_logZ.png")
+            plt.title(f"{args.algo} logZ statistics K={args.K} steps={args.num_steps}")
+            plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_logZ.png")
             plt.close()
+
+            # output final logZ estimate
+            logZ_est = float(logz_vals[len(x)-1])
+            # true logZ from target distribution
+            logZ_true = float(alg.target_dist.log_Z())
+            delta_logZ = abs(logZ_est - logZ_true)
+
+            # save single-run result
+            if args.write_logZ:
+                out_path = os.path.join(args.results_dir,
+                                        f"delta_logZ_{args.algo}_{args.target_dist}.txt")
+                write_mode = "w" if (args.seed == 0 or not os.path.exists(out_path)) else "a"
+
+                with open(out_path, write_mode) as f:
+                    f.write(f"{delta_logZ}\n")
+                print(f"Δ logZ = {delta_logZ:.6f}  (saved to {out_path})")
         
         
     else:
@@ -193,30 +221,31 @@ def main():
         alg.state = alg.state.replace(params=saved_params)
 
 
-    # Sampling
-    key, sub = jr.split(key)
-    samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=10000)
-    samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
-    score_seq = jax.device_get(score_seq)    
-    
+    if args.do_visualization:
+        # Sampling
+        key, sub = jr.split(key)
+        samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=10000)
+        samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
+        score_seq = jax.device_get(score_seq)    
+        
 
-    # Metrics
-    final_samples = samples_seq[-1]
-    # Compute MMD between final_samples and target samples
-    tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), 10000)
-    result = two_wasserstein(np.array(final_samples), np.array(tgt_samps))
-    print(f"Wasserstein distance: {result:.4e}")
+        # Visualization 
+        if args.target_dist in ["1d", "gmm40", 'funnel','gmmfixed']:
+            print("Visualizing samples...")
+            if args.use_true_score and args.target_dist == "1d":
+                figname = "true_score"
+                alg.visualize_samples(samples_seq,figname=figname)
+            else:
+                figname = "estimated_score"
+                alg.visualize_samples(samples_seq, figname=figname)
 
-    # Visualization 
-    if args.target_dist in ["1d", "gmm40", 'funnel','gmmfixed']:
-        print("Visualizing samples...")
-        if args.use_true_score and args.target_dist == "1d":
-            figname = "true_score"
-            alg.visualize_samples(samples_seq,figname=figname)
-        else:
-            figname = "estimated_score"
-            alg.visualize_samples(samples_seq, figname=figname)
 
+    # # Metrics
+    # final_samples = samples_seq[-1]
+    # # Compute MMD between final_samples and target samples
+    # tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), 10000)
+    # result = two_wasserstein(np.array(final_samples), np.array(tgt_samps))
+    # print(f"Wasserstein distance: {result:.4e}")
 
     # Plot -loss that should converge to ELBO
     if args.target_dist in ['sonar']:
@@ -240,6 +269,23 @@ def main():
        
 
 
+def summarize_results(results_dir="results", excel_path="metric_results.xlsx"):
+    records = []
+    for fname in glob.glob(os.path.join(results_dir, "delta_logZ_*.txt")):
+        # pattern: delta_logZ_algo_target.txt
+        base = os.path.basename(fname)
+        parts = base.replace(".txt", "").split("_")
+        algo, target = parts[2], parts[3]
+        vals = [float(x.strip()) for x in open(fname)]
+        mean = np.mean(vals)
+        records.append((target, algo, mean))
+
+    df = pd.DataFrame(records, columns=["Target", "Algorithm",
+                                        "Mean ΔlogZ"])
+    pivot = df.pivot(index="Target", columns="Algorithm",
+                    values="Mean ΔlogZ")
+    pivot.to_excel(excel_path)
+    print(f"Summary written to {excel_path}")
 
 
 

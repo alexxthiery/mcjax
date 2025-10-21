@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from flax.training import train_state
 from functools import partial
+import optax
 
 class Trainer:
     """
