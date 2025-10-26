@@ -18,6 +18,7 @@ class Banana2D(LogDensity):
                 ):
         self.noise_std = noise_std
         self._dim = 2
+        self.can_sample = True
 
     # define the logpdf
     def logdensity(self, x):

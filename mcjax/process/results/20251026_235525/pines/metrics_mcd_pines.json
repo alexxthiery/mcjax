@@ -1,0 +1,11 @@
+{
+    "delta_logZ": [
+        400.01971435546875
+    ],
+    "wasserstein": [
+        NaN
+    ],
+    "sinkhorn": [
+        NaN
+    ]
+}

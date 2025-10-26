@@ -33,7 +33,7 @@ class LogGaussPines(LogDensity):
         dim = grid_dim**2
         num_dim = dim
         self._dim = dim
-        self.log_Z = 0.0
+        self._log_Z = 0.0
         self.n_plots = 0
         self.can_sample = False
         self._num_latents = num_dim
@@ -109,3 +109,6 @@ class LogGaussPines(LogDensity):
     def initialize_model(self, rng_key, n_chain):
         keys = jax.random.split(rng_key, n_chain)
         self.init_params = jax.vmap(lambda k: self._mu_zero + self._cholesky_gram @ jax.random.normal(k, (self._num_latents,)))(keys)
+
+    def log_Z(self):
+        return self._log_Z

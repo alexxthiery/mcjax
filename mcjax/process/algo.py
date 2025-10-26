@@ -18,6 +18,7 @@ from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40, GMMFixed
 from mcjax.proba.doublewell import DoubleWell
+from mcjax.proba.log_gauss_pines import LogGaussPines
 from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss, SupervisedScoreMatchingLoss
 from trainer import Trainer, InnerTrainer
 from mcjax.proba.sonar import BayesianLogisticTarget
@@ -75,6 +76,10 @@ class BaseAlgorithm(ABC):
             self.target_dist = NealFunnel(sigma_x=3.0, dim=2)
             self.data_dim = 2
         
+        elif config.target_dist == 'pines':
+            self.target_dist = LogGaussPines(grid_dim=40, use_whitened=False)
+            self.data_dim = 40 * 40  # 1600 dimensions
+        
         elif config.target_dist == 'sonar':
             self.target_dist = BayesianLogisticTarget(prior_var=1.0)
             self.data_dim = self.target_dist.d  # 61 features + bias = 62
@@ -98,26 +103,12 @@ class BaseAlgorithm(ABC):
             beta_start, beta_end = 1.0, 20.0
             beta = beta_start + (beta_end - beta_start) * (ts / (K - 1))
         else:
-            beta = jnp.ones(K) * 2
+            beta = jnp.ones(K) * 1
         alpha = 1.0 - jnp.exp(-2.0 * beta * T / K)
 
         # make the OU process
         self.ou = OU(T = T, alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
 
-        # draw beta, alpha, sqrt_1m_alpha, sqrt_alpha in one plot
-        sqrt_1m_alpha = jnp.sqrt(1.0 - alpha)
-        sqrt_alpha = jnp.sqrt(alpha)
-        plt.figure(figsize=(10, 6))
-        plt.plot(ts, alpha, label='alpha')
-        plt.plot(ts, sqrt_1m_alpha, label='sqrt_1m_alpha')
-        plt.plot(ts, sqrt_alpha, label='sqrt_alpha')
-        plt.legend()
-        plt.xlabel('Time step')
-        plt.ylabel('Value')
-        plt.title('SDE Schedule')
-        plt.grid()
-        plt.savefig(f"{config.results_dir}/sde_schedule.png")
-        plt.close()
 
     def make_score_fn(self):
         """
@@ -147,8 +138,7 @@ class BaseAlgorithm(ABC):
 
             elif condition == 'grad_score':
                 gradp = target.grad_batch(y)  
-                # normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
-                normed = gradp # test without batch normalization
+                normed = gradp / (jnp.std(gradp, axis=0, keepdims=True) + 1e-5)
                 return nn1 + nn2 * normed
 
             else:
@@ -201,6 +191,192 @@ class BaseAlgorithm(ABC):
             return seq,score_seq  
         return generate(params, rng_key)   
 
+    @abstractmethod
+    def estimate_logZ(self):
+        """
+        Estimate log partition function using reverse OU chain.
+        Returns: logZ estimates of shape (num_samples,)
+        """
+        pass
+
+    def visualize_samples(self, sample_seq, figname):
+        """
+        Generic 1D / 2D visualization of the reverse chain. 
+        sample_seq is expected to have shape (K, num_samples, data_dim).
+
+        Subclasses must set:
+         - self.data_dim ∈ {1,2}
+         - self.init_dist, self.target_dist to sample enough points for KDE/contour
+         - self.cfg.K, self.cfg.folder_path, etc.
+        """
+    
+        if self.data_dim == 1:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            # Plot initial‐ and target‐density reference lines
+            xs = jnp.linspace(-7, 10, 1000)
+            init_samples = self.init_dist.sample(jr.PRNGKey(0), 100000).flatten()
+            targ_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
+
+            initial_kde = gaussian_kde(init_samples)
+            target_kde  = gaussian_kde(targ_samples)
+
+            ax.plot(xs, initial_kde(xs), 'b--', lw=2, label='Init Dist')
+            ax.plot(xs, target_kde(xs),  'g--', lw=2, label='Target Dist')
+
+            # Precompute KDEs for each frame
+            kde_x = jnp.linspace(-7, 10, 500)
+            frame_densities = []
+            for frame in range(self.cfg.K):
+                curr = sample_seq[frame].flatten()
+                kde = gaussian_kde(curr)
+                frame_densities.append(kde(kde_x))
+
+            line, = ax.plot([], [], 'r-', lw=2, label='Samples')
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
+            ax.set_xlim(-7, 10)
+            ax.set_ylim(0, 0.5)
+            ax.set_xlabel('x')
+            ax.set_ylabel('density')
+            ax.set_title('1D Density Evolution')
+            ax.legend(loc='upper right')
+
+            def animate(frame):
+                line.set_data(kde_x, frame_densities[frame])
+                time_text.set_text(f'Step: {frame}/{self.cfg.K}')
+                return line, time_text
+
+            ani = animation.FuncAnimation(
+                fig=fig,
+                func=animate,
+                frames=self.cfg.K,
+                interval=20,
+                blit=True
+            )
+            writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
+            fname = f'{self.cfg.folder_path}/{self.cfg.target_dist}/density_evolution_{self.cfg.algo}_{figname}.mp4'
+            ani.save(fname, writer=writer)
+            plt.close()
+
+        elif self.data_dim == 2:
+            key = jr.PRNGKey(42)
+            pts = self.target_dist.sample(key, 100_000)
+            pts = jax.device_get(pts)
+
+            lower = np.percentile(pts, 0.5, axis=0)
+            upper = np.percentile(pts, 99.5, axis=0)
+            margin = 0.05 * (upper - lower)
+            xmin, xmax = lower[0] - margin[0], upper[0] + margin[0]
+            ymin, ymax = lower[1] - margin[1], upper[1] + margin[1]
+
+            x = np.linspace(xmin, xmax, 200)
+            y = np.linspace(ymin, ymax, 200)
+            X, Y = np.meshgrid(x, y)
+            grid = np.stack([X.ravel(), Y.ravel()], axis=1)
+            grid = jnp.array(grid)
+
+
+            Ztarg = self.target_dist.batch(grid).reshape(X.shape)
+            Ztarg = np.exp(np.array(Ztarg))
+            Ztarg_norm = (Ztarg - Ztarg.min()) / (Ztarg.max() - Ztarg.min())
+            vmin, vmax = Ztarg_norm.min(), Ztarg_norm.max()
+
+            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+            ax_left, ax_right = axes
+            plt.tight_layout()
+
+            # --- Right: target density (fixed contour) ---
+
+            contour_right = ax_right.contourf(X, Y, Ztarg_norm.T, levels=30, cmap="viridis")
+            ax_right.set_title("Target Density")
+            ax_right.set_xlabel("x1")
+            ax_right.set_ylabel("x2")
+
+            # --- Left: evolving sample density  ---
+            curr = sample_seq[0]
+            H, xe, ye = np.histogram2d(curr[:, 1], curr[:, 0], bins=200, 
+                                     range=[[ymin, ymax], [xmin, xmax]], density=True)
+            H_norm = (H - H.min()) / (H.max() - H.min())
+            ax_left.contourf(X, Y, H_norm, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
+            ax_left.set_title("Evolving Sample Density")
+            ax_left.set_xlabel("x1")
+            ax_left.set_ylabel("x2")
+
+            time_text = fig.text(0.45, 0.92, '', fontsize=12, ha='center')
+
+            def animate(frame):
+                # clear only the left axis
+                ax_left.cla()
+
+                # recompute histogram for this frame
+                curr = sample_seq[frame]
+                H, _, _ = np.histogram2d(curr[:, 1], curr[:, 0], bins=200,
+                                         range=[[ymin, ymax], [xmin, xmax]], density=True)
+                H_norm_frame = (H - H.min()) / (H.max() - H.min())
+
+                # redraw contour on left axis
+                ax_left.contourf(X, Y, H_norm_frame, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
+                ax_left.set_title("Evolving Sample Density")
+                ax_left.set_xlabel("x1")
+                ax_left.set_ylabel("x2")
+
+                time_text.set_text(f"Step: {frame}/{self.cfg.K}")
+
+                return [time_text]
+            
+            ani = animation.FuncAnimation(
+                fig=fig,
+                func=animate,
+                frames=self.cfg.K,
+                interval=80,
+                blit=False
+            )
+
+            writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
+            fname = f"{self.cfg.folder_path}/{self.cfg.target_dist}/sample_movement_{self.cfg.algo}_{figname}.mp4"
+            ani.save(fname, writer=writer)
+            plt.close(fig)
+
+        else:
+            print(f"Unsupported data_dim: {self.data_dim}; Visualization only implemented for 1D and 2D data.")
+
+class DDSAlgorithm(BaseAlgorithm):
+    """
+    Implements the DDS sampler (Denoising Diffusion Sampler)
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+        # build the network
+        #    choose MLP or ResBlock based on config.model_type
+        if config.network_name == 'mlp':
+            self.model = MLPModel(dim=self.data_dim, T=config.K)
+        elif config.network_name == 'resblock':
+            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
+        else:
+            raise ValueError(f"Unknown model_type: {config.network_name}")
+
+        # initialize network params
+        key = jr.PRNGKey(config.seed)
+        key, sub = jr.split(key)
+        dummy_x = jnp.zeros((config.batch_size, self.data_dim))
+        dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.int32)
+        self.params = self.model.init(sub, dummy_x, dummy_t)
+
+        self.opt = optax.chain(optax.clip_by_global_norm(5.0), optax.adamw(config.lr, b1=0.5, b2=0.9))
+        
+        self.state = train_state.TrainState.create(
+            apply_fn=self.model.apply, params=self.params, tx=self.opt
+        )
+
+        # build score_fn
+        self.score_fn = self.make_score_fn()
+
+        # build loss object
+        self.loss_obj = self.make_loss()
+
+    def make_loss(self):
+        return DDSLoss(add_score=self.cfg.add_score)
+
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
         """
@@ -251,253 +427,11 @@ class BaseAlgorithm(ABC):
 
         log_ref  = self.init_dist.batch(yK)     # shape: (num_samples,)
         log_targ = self.target_dist.batch(yK)   # shape: (num_samples,)
-        logZ     = rK + log_ref - log_targ      # shape: (num_samples,)
+        logZ     = -(rK + log_ref - log_targ)      # shape: (num_samples,)
 
         return logZ
 
-    def visualize_samples(self, sample_seq, figname):
-        """
-        Generic 1D / 2D visualization of the reverse chain. 
-        sample_seq is expected to have shape (K, num_samples, data_dim).
 
-        Subclasses must set:
-         - self.data_dim ∈ {1,2}
-         - self.init_dist, self.target_dist to sample enough points for KDE/contour
-         - self.cfg.K, self.cfg.results_dir, etc.
-        """
-    
-        if self.data_dim == 1:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            # Plot initial‐ and target‐density reference lines
-            xs = jnp.linspace(-7, 10, 1000)
-            init_samples = self.init_dist.sample(jr.PRNGKey(0), 100000).flatten()
-            targ_samples = self.target_dist.sample(jr.PRNGKey(1), 100000).flatten()
-
-            initial_kde = gaussian_kde(init_samples)
-            target_kde  = gaussian_kde(targ_samples)
-
-            ax.plot(xs, initial_kde(xs), 'b--', lw=2, label='Init Dist')
-            ax.plot(xs, target_kde(xs),  'g--', lw=2, label='Target Dist')
-
-            # Precompute KDEs for each frame
-            kde_x = jnp.linspace(-7, 10, 500)
-            frame_densities = []
-            for frame in range(self.cfg.K):
-                curr = sample_seq[frame].flatten()
-                kde = gaussian_kde(curr)
-                frame_densities.append(kde(kde_x))
-
-            line, = ax.plot([], [], 'r-', lw=2, label='Samples')
-            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
-            ax.set_xlim(-7, 10)
-            ax.set_ylim(0, 0.5)
-            ax.set_xlabel('x')
-            ax.set_ylabel('density')
-            ax.set_title('1D Density Evolution')
-            ax.legend(loc='upper right')
-
-            def animate(frame):
-                line.set_data(kde_x, frame_densities[frame])
-                time_text.set_text(f'Step: {frame}/{self.cfg.K}')
-                return line, time_text
-
-            ani = animation.FuncAnimation(
-                fig=fig,
-                func=animate,
-                frames=self.cfg.K,
-                interval=20,
-                blit=True
-            )
-            writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.results_dir}/{self.cfg.target_dist}/density_evolution_{self.cfg.algo}_{figname}.mp4'
-            ani.save(fname, writer=writer)
-            plt.close()
-
-        elif self.data_dim == 2:
-            key = jr.PRNGKey(42)
-            pts = self.target_dist.sample(key, 100_000)
-            pts = jax.device_get(pts)
-
-            lower = np.percentile(pts, 0.5, axis=0)
-            upper = np.percentile(pts, 99.5, axis=0)
-            margin = 0.05 * (upper - lower)
-            xmin, xmax = lower[0] - margin[0], upper[0] + margin[0]
-            ymin, ymax = lower[1] - margin[1], upper[1] + margin[1]
-
-            x = np.linspace(xmin, xmax, 200)
-            y = np.linspace(ymin, ymax, 200)
-            X, Y = np.meshgrid(x, y)
-            grid = np.stack([X.ravel(), Y.ravel()], axis=1)
-            grid = jnp.array(grid)
-
-
-            Ztarg = self.target_dist.batch(grid).reshape(X.shape)
-            Ztarg = np.exp(np.array(Ztarg))
-            Ztarg_norm = (Ztarg - Ztarg.min()) / (Ztarg.max() - Ztarg.min())
-            vmin, vmax = Ztarg.min(), Ztarg.max()
-
-            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-            ax_left, ax_right = axes
-            plt.tight_layout()
-
-            # --- Right: target density (fixed contour) ---
-
-            contour_right = ax_right.contourf(X, Y, Ztarg_norm.T, levels=30, cmap="viridis")
-            ax_right.set_title("Target Density")
-            ax_right.set_xlabel("x1")
-            ax_right.set_ylabel("x2")
-
-            # --- Left: evolving sample density  ---
-            curr = sample_seq[0]
-            H, xe, ye = np.histogram2d(curr[:, 0], curr[:, 1], bins=200,
-                                    range=[[xmin, xmax], [ymin, ymax]], density=True)
-            H_norm = (H - H.min()) / (H.max() - H.min())
-            ax_left.contourf(X, Y, H_norm.T, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
-            ax_left.set_title("Evolving Sample Density")
-            ax_left.set_xlabel("x1")
-            ax_left.set_ylabel("x2")
-
-            time_text = fig.text(0.45, 0.92, '', fontsize=12, ha='center')
-
-            def animate(frame):
-                # clear only the left axis
-                ax_left.cla()
-
-                # recompute histogram for this frame
-                curr = sample_seq[frame]
-                H, _, _ = np.histogram2d(curr[:, 0], curr[:, 1], bins=200,
-                                        range=[[xmin, xmax], [ymin, ymax]], density=True)
-
-                # redraw contour on left axis
-                ax_left.contourf(X, Y, H.T, levels=30, cmap="viridis", vmin=vmin, vmax=vmax)
-                ax_left.set_title("Evolving Sample Density")
-                ax_left.set_xlabel("x1")
-                ax_left.set_ylabel("x2")
-
-                time_text.set_text(f"Step: {frame}/{self.cfg.K}")
-
-                return [time_text]
-            
-            ani = animation.FuncAnimation(
-                fig=fig,
-                func=animate,
-                frames=self.cfg.K,
-                interval=80,
-                blit=False
-            )
-
-            writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f"{self.cfg.results_dir}/{self.cfg.target_dist}/sample_movement_{self.cfg.algo}_{figname}.mp4"
-            ani.save(fname, writer=writer)
-            plt.close(fig)
-
-        else:
-            raise ValueError(f"Unsupported data_dim: {self.data_dim}")
-
-class DDSAlgorithm(BaseAlgorithm):
-    """
-    Implements the DDS sampler (Denoising Diffusion Sampler)
-    """
-
-    def __init__(self, config):
-        super().__init__(config)
-        # build the network
-        #    choose MLP or ResBlock based on config.model_type
-        if config.network_name == 'mlp':
-            self.model = MLPModel(dim=self.data_dim, T=config.K)
-        elif config.network_name == 'resblock':
-            self.model = ResBlockModel(dim=self.data_dim, T=config.K)
-        else:
-            raise ValueError(f"Unknown model_type: {config.network_name}")
-
-        # initialize network params
-        key = jr.PRNGKey(config.seed)
-        key, sub = jr.split(key)
-        dummy_x = jnp.zeros((config.batch_size, self.data_dim))
-        dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.int32)
-        self.params = self.model.init(sub, dummy_x, dummy_t)
-
-        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
-        
-        self.state = train_state.TrainState.create(
-            apply_fn=self.model.apply, params=self.params, tx=self.opt
-        )
-
-        # build score_fn
-        self.score_fn = self.make_score_fn()
-
-        # build loss object
-        self.loss_obj = self.make_loss()
-
-    def make_loss(self):
-        if self.cfg.use_true_score and self.cfg.target_dist == '1d':
-            return SupervisedScoreMatchingLoss(
-                mu = self.target_dist.mu, comp_sigmas= self.target_dist.sigma,
-                weights=jnp.exp(self.target_dist.log_w), ou=self.ou, data_dim=self.data_dim
-            )
-        else:
-            return DDSLoss(add_score=self.cfg.add_score)
-    
-    def mixture_score(self, y, k, mu, comp_sigmas, weights):
-        """
-        Compute the score function in OU process for 1d (isotropic) mixed-gaussian initial distribution.
-        """
-        # y:   of shape (batch)
-        # k:   integer time index
-        # mu:  array (n_comp, 1)
-        # comp_sigmas: array (n_comp,)  # component std devs
-        # weights: array (n_comp,)
-    
-        # Compute a_k = prod_{j<k}(1 - alpha[j])
-        a_k = jnp.prod(1.0 - self.ou.alpha[:k])
-    
-        # Component means and variances at time k
-        m_k   = jnp.sqrt(a_k) * mu            
-        v_k   = a_k * (comp_sigmas**2) + (1 - a_k)*(self.ou.sigma**2)  
-    
-        # Expand to match batch shape
-        # p_i = w_i * N(y | m_k[i], v_k[i]); score_i = (m_k[i] - y) / v_k[i]
-        diffs = m_k[:, None, :] - y[None, :, :] # shape (n_comp, batch, 1)               
-        exps  = jnp.exp(-0.5 * (diffs**2) / v_k[:, None, None]) \
-                / jnp.sqrt(2*jnp.pi*v_k[:, None, None])         
-        pis   = weights[:, None, None] * exps      
-    
-        # numerator: sum_i pis[i] * (diffs[i]/v_k[i])
-        numer = jnp.sum(pis * (diffs / v_k[:, None, None]), axis=0) # (batch, 1)
-        denom = jnp.sum(pis, axis=0) # (batch, 1)
-    
-
-        return (numer / denom).reshape(-1)
-
-    def sample_forward(self, rng_key, num_samples):
-        """
-        Run the *forward* OU process from the mixed‐Gaussian (self.target_dist)
-        toward the stationary Gaussian (self.init_dist).
-        Returns:
-          sample_seq: jnp.ndarray of shape (K, num_samples, data_dim)
-        """
-        # unpack
-        alphas = self.ou.alpha          # shape (K,)
-        sigma  = self.ou.sigma         # scalar
-
-        # y₀ ~ target_dist (mixed Gaussian)
-        key, sub = jr.split(rng_key)
-        y = self.target_dist.sample(sub, num_samples)  # (num_samples, data_dim)
-
-        seq = [y]
-        for t in range(self.cfg.K):
-            key, sub = jr.split(key)
-            eps    = jr.normal(sub, y.shape)           # noise
-            alpha_t    = alphas[t]
-            sqrt1m = jnp.sqrt(1.0 - alpha_t)
-            # forward OU step
-            y = sqrt1m * y + sigma * jnp.sqrt(alpha_t) * eps
-            seq.append(y)
-
-        sample_seq = jnp.stack(seq[:-1], axis=0)  # shape (K, num_samples, data_dim)
-        return sample_seq
-
-    def visualize_forward(self, rng_key, num_samples):
         """
         propagate forward from mixed Gaussian -> approx standard Gaussian
         call visualize_samples to animate that path,then swap init/target
@@ -1080,81 +1014,6 @@ class PISAlgorithm(BaseAlgorithm):
         logZ = -stoch_int_final - run_cost_final + log_p_target - log_ref
         
         return logZ
-
-    def mixture_score(self, y, k, mu, comp_sigmas, weights):
-        """
-        Exact score for 1d mixed-isotropic Gaussian mixture at timestep k.
-            y:           array (batch,) or (batch,1)
-            k:           integer time index in [0, K-1]
-            mu:          array (n_comp, 1)
-            comp_sigmas: array (n_comp,)    # sigma_i of each mixture component
-            weights:     array (n_comp,)    # mixture weights w_i
-            Returns:
-            score:       array (batch,)    
-        """
-
-        # time step and total variance from Brownian increments
-        dt = self.cfg.T / self.cfg.K
-        var_noise = k * dt             
-
-        # component variances at step k: σ_i^2 + var_noise
-        v = comp_sigmas**2 + var_noise  
-
-        # build (n_comp, batch, 1) diffs
-        diffs = mu[:, None, :] - y[None, :, :]   # (n_comp, batch, 1)
-
-        # component pdfs: N(y | m_i, v_i) 
-        v_e  = v[:, None, None]                             
-        norm = jnp.sqrt(2 * jnp.pi * v_e)                  
-        exps = jnp.exp(-0.5 * (diffs**2) / v_e) / norm       
-        pis  = weights[:, None, None] * exps                
-
-        # weighted average of (m_i - y)/v_i
-        numer = jnp.sum(pis * (diffs / v_e), axis=0)            # (batch,1)
-        denom = jnp.sum(pis, axis=0)                           # (batch,1)
-
-        return (numer / denom).reshape(-1)                     # (batch,)
-
-    def sample_forward(self, rng_key, num_samples):
-        """
-        Run the *forward* OU process from the mixed‐Gaussian (self.target_dist)
-        toward the stationary Gaussian (self.init_dist).
-        Returns:
-          sample_seq: jnp.ndarray of shape (K, num_samples, data_dim)
-        """
-        # y₀ ~ target_dist (mixed Gaussian)
-        key, sub = jr.split(rng_key)
-        y = self.target_dist.sample(sub, num_samples)  # (num_samples, data_dim)
-        dt = self.cfg.T / self.cfg.K  # time step
-        seq = [y]
-        for t in range(self.cfg.K):
-            key, sub = jr.split(key)
-            eps = jr.normal(sub, y.shape)  # noise
-            y = y + jnp.sqrt(dt) * eps
-            seq.append(y)
-        return jnp.stack(seq)
-
-    def visualize_forward(self, rng_key, num_samples):
-        """
-        propagate forward from mixed Gaussian -> approx standard Gaussian
-        call visualize_samples to animate that path,then swap init/target
-        """
-
-        # get the forward trajectory
-        sample_seq = self.sample_forward(rng_key, num_samples)
-
-        # swap init_dist <-> target_dist
-        orig_init   = self.init_dist
-        orig_target = self.target_dist
-        self.init_dist   = orig_target
-        self.target_dist = orig_init
-
-        # visualize
-        self.visualize_samples(sample_seq,figname="forward")
-
-        # restore
-        self.init_dist   = orig_init
-        self.target_dist = orig_target
 
 class ControlledMonteCarloDiffusion(BaseAlgorithm):
     """

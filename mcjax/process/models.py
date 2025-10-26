@@ -155,14 +155,14 @@ class ResBlockModel(nn.Module, BaseModel):
         # Output heads with proper initialization
         nn1_out = nn.Dense(
             self.dim,
-            kernel_init=nn.initializers.variance_scaling(0.1, 'fan_in', 'truncated_normal'),
-            bias_init=nn.initializers.zeros
+            kernel_init = nn.initializers.zeros,
+            bias_init = nn.initializers.constant(0.01)
         )(h)
         
         nn2_out = nn.Dense(
             self.dim,
-            kernel_init=nn.initializers.variance_scaling(0.1, 'fan_in', 'truncated_normal'),
-            bias_init=nn.initializers.zeros
+            kernel_init = nn.initializers.zeros,
+            bias_init = nn.initializers.constant(0.01)
         )(t_emb)
         
         return nn1_out, nn2_out
@@ -178,3 +178,4 @@ class ResBlockModel(nn.Module, BaseModel):
 
     def apply_fn(self, params, x: jnp.ndarray, t: jnp.ndarray):
         return self.apply(params, x, t)
+

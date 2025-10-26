@@ -31,6 +31,7 @@ class IsotropicGauss(LogDensity):
         self._dim = len(mu)
         logdet = self.dim*self.log_var
         self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+        self.can_sample = True
 
     def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma)) - self._log_Z
@@ -53,8 +54,7 @@ class IsotropicGauss(LogDensity):
         return jax.random.normal(key, (n_samples, self.dim)) * self.sigma + self.mu[None, :]
     
     def log_Z(self):
-        """ log partition function """
-        return -0.5 * self.dim * jnp.log(2 * jnp.pi) - self.dim*jnp.log(self.sigma)
+        return 0.0
 
 
 # ==================================
@@ -85,6 +85,7 @@ class MixedIsotropicGauss(LogDensity):
         self.num_components = mu.shape[0]
         self.sigma = jnp.exp(0.5*self.log_var)
         self._dim = mu.shape[1]
+        self.can_sample = True
 
     def logdensity(self, x):
         '''
@@ -135,6 +136,9 @@ class MixedIsotropicGauss(LogDensity):
 
         x = mu_z + sigma_z[:, None] * eps
         return x
+    
+    def log_Z(self):
+        return 0.0
 
 
 # ==================================
@@ -158,6 +162,20 @@ class GMM40(MixedIsotropicGauss):
         ) * loc_scaling  # shape (n_mixes, dim)
 
         log_var = jnp.full((n_mixes,), 2.0 * jnp.log(scale_scaling))
+        super().__init__(mu=mean, log_var=log_var, weights=weights)
+
+class GMMFixed(MixedIsotropicGauss):
+    '''
+    Fixed 2D GMM with 9 components:
+    x \in {-4, 0, 4}, y \in {-4, 0, 4};weights are uniform
+    '''
+    def __init__(self):
+        dim = 2
+        n_mixes = 9
+        locs = jnp.array([-4.0, 0.0, 4.0])
+        mean = jnp.array([[x, y] for x in locs for y in locs])  # shape (n_mixes, dim)
+        log_var = jnp.full((n_mixes,), jnp.log(0.5))
+        weights = jnp.ones(n_mixes) / n_mixes
         super().__init__(mu=mean, log_var=log_var, weights=weights)
 
 
@@ -210,9 +228,8 @@ class DiagGauss(LogDensity):
         return jax.random.normal(key, (n_samples, self.dim)) * self.sigma[None,:] + self.mu[None, :]
     
     def log_Z(self):
-        """ log partition function """
-        return -0.5 * self.dim * jnp.log(2 * jnp.pi) - jnp.sum(jnp.log(self.sigma))
-    
+        return 0.0
+
 
 # ==================================
 # General Gaussian Distribution

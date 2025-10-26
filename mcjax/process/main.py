@@ -14,9 +14,12 @@ import time
 from scipy.stats import gaussian_kde
 import pandas as pd
 import glob, os
+import torch
+import json
+from datetime import datetime
 
 from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm, ControlledMonteCarloDiffusion
-from metrics import MMD_squared,two_wasserstein
+from metrics import MMD_squared,two_wasserstein,sinkhorn_distance
 
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
@@ -57,21 +60,52 @@ def parse_args():
     parser.add_argument("--debug_fill_buffer", type=str2bool, default=False)
     parser.add_argument("--backdiffusion_true_score", type=str2bool, default=False)
     parser.add_argument("--use_control_in_denominator", type=str2bool, default=True)
-    parser.add_argument("--use_true_score", type=str2bool, default=False)
-    parser.add_argument("--visualize_forward", type=str2bool, default=False)
-    parser.add_argument("--do_visualization", type=str2bool, default=True)
+    parser.add_argument("--visualize_and_metrics", type=str2bool, default=True)
     parser.add_argument("--write_logZ", type=str2bool, default=True)
+    parser.add_argument("--set_timestamp", type=str2bool, default=False)
+    parser.add_argument("--timestamp", type=str, default="default_timestamp")
+    parser.add_argument("--samples_for_final_visualization", type=int, default=10000)
     return parser.parse_args()
 
+def append_metrics(algo, target, delta_logZ, wass, sink, target_folder_path):
+    os.makedirs(target_folder_path, exist_ok=True)
+    fname = os.path.join(target_folder_path, f"metrics_{algo}_{target}.json")
+
+    # If file exists, load existing data
+    if os.path.exists(fname):
+        with open(fname, "r") as f:
+            data = json.load(f)
+    else:
+        data = {"delta_logZ": [], "wasserstein": [], "sinkhorn": []}
+
+    # Append new results
+    data["delta_logZ"].append(float(delta_logZ))
+    data["wasserstein"].append(float(wass))
+    data["sinkhorn"].append(float(sink))
+
+    # Save back
+    with open(fname, "w") as f:
+        json.dump(data, f, indent=4)
+    print(f"Appended new metrics to {fname}")
 
 def main():
     args = parse_args()
     # create results_dir if not exist
-    if not os.path.exists(args.results_dir):
-        os.makedirs(args.results_dir)
+    os.makedirs(args.results_dir, exist_ok=True)
+
+    if args.set_timestamp:
+        timestamp = args.timestamp
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # create folder for this timestamp
+    folder_path = os.path.join(args.results_dir, timestamp)
+    os.makedirs(folder_path, exist_ok=True)
+
+    # add folder_path to args
+    args.folder_path = folder_path
+
     # create models dir if not exist
-    if not os.path.exists("models"):
-        os.makedirs("models")
+    os.makedirs("models", exist_ok=True)
 
     # Choose algorithm class
     if args.algo == "dds":
@@ -88,16 +122,8 @@ def main():
     alg = AlgoClass(config=args)
 
     # create target_dist results dir if not exist
-    target_results_dir = f"{args.results_dir}/{args.target_dist}"
-    if not os.path.exists(target_results_dir):
-        os.makedirs(target_results_dir)
-
-    if args.visualize_forward and args.target_dist == "1d":
-        # Visualize the forward process from mixed Gaussian to approx standard Gaussian
-        print("Visualizing forward process...")
-        key = jr.PRNGKey(0)
-        alg.visualize_forward(key, num_samples=10000)
-        return
+    target_folder_path = f"{args.folder_path}/{args.target_dist}"
+    os.makedirs(target_folder_path, exist_ok=True)
     
     if args.algo == "idem" and args.backdiffusion_true_score and args.target_dist == "1d":
         print("Using true score function for backdiffusion in IDEM...")
@@ -131,15 +157,15 @@ def main():
         plt.ylabel("loss")
         plt.legend()
         plt.title(f"{args.algo} training loss K={args.K} steps={args.num_steps}")
-        plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_loss.png")
+        plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_loss.png")
         plt.close()
 
         if args.algo == "idem" and args.target_dist == "1d":
             # Delete old buffer histograms
             # search for files matching the pattern
-            for filename in os.listdir(args.results_dir):
+            for filename in os.listdir(args.folder_path + '/' + args.target_dist):
                 if filename.startswith(f"{args.algo}_buffer_step_") and filename.endswith(".png"):
-                    os.remove(os.path.join(args.results_dir, filename))
+                    os.remove(os.path.join(args.folder_path + '/' + args.target_dist, filename))
 
             # plot buffer data (hist) every 10 steps
             print("Plotting buffer data histograms...")
@@ -150,7 +176,7 @@ def main():
                 plt.title(f"Buffer data at step {i}")
                 plt.xlabel("x")
                 plt.ylabel("Density")
-                plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_buffer_step_{i}.png")
+                plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_buffer_step_{i}.png")
                 plt.close()
             # plot the final buffer data
             plt.figure()
@@ -158,7 +184,7 @@ def main():
             plt.title(f"Final Buffer data at step {len(buffer_data)}")
             plt.xlabel("x")
             plt.ylabel("Density")
-            plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_buffer_step_{len(buffer_data)}.png")
+            plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_buffer_step_{len(buffer_data)}.png")
             plt.close()
 
             # plot diff_true_ests curve
@@ -168,7 +194,7 @@ def main():
             plt.ylabel("diff_true_est")
             plt.legend()
             plt.title(f"{args.algo} diff_true_est")
-            plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_diff_true_est.png")
+            plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_diff_true_est.png")
             plt.close()
 
         # Plot logZ (if computed)
@@ -193,7 +219,7 @@ def main():
             l2, lbl2 = ax2.get_legend_handles_labels()
             ax1.legend(lines + l2, labels + lbl2, loc='upper left')
             plt.title(f"{args.algo} logZ statistics K={args.K} steps={args.num_steps}")
-            plt.savefig(f"{args.results_dir}/{args.target_dist}/{args.algo}_logZ.png")
+            plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_logZ.png")
             plt.close()
 
             # output final logZ estimate
@@ -202,16 +228,6 @@ def main():
             logZ_true = float(alg.target_dist.log_Z())
             delta_logZ = abs(logZ_est - logZ_true)
 
-            # save single-run result
-            if args.write_logZ:
-                out_path = os.path.join(args.results_dir,
-                                        f"delta_logZ_{args.algo}_{args.target_dist}.txt")
-                write_mode = "w" if (args.seed == 0 or not os.path.exists(out_path)) else "a"
-
-                with open(out_path, write_mode) as f:
-                    f.write(f"{delta_logZ}\n")
-                print(f"Δ logZ = {delta_logZ:.6f}  (saved to {out_path})")
-        
         
     else:
         # Load saved params and wrap into a dummy TrainState
@@ -221,31 +237,34 @@ def main():
         alg.state = alg.state.replace(params=saved_params)
 
 
-    if args.do_visualization:
+    if args.visualize_and_metrics:
         # Sampling
         key, sub = jr.split(key)
-        samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=10000)
+        samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=args.samples_for_final_visualization)
         samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
         score_seq = jax.device_get(score_seq)    
         
 
         # Visualization 
-        if args.target_dist in ["1d", "gmm40", 'funnel','gmmfixed']:
-            print("Visualizing samples...")
-            if args.use_true_score and args.target_dist == "1d":
-                figname = "true_score"
-                alg.visualize_samples(samples_seq,figname=figname)
-            else:
-                figname = "estimated_score"
-                alg.visualize_samples(samples_seq, figname=figname)
+        figname = "estimated_score"
+        alg.visualize_samples(samples_seq, figname=figname)
 
 
-    # # Metrics
-    # final_samples = samples_seq[-1]
-    # # Compute MMD between final_samples and target samples
-    # tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), 10000)
-    # result = two_wasserstein(np.array(final_samples), np.array(tgt_samps))
-    # print(f"Wasserstein distance: {result:.4e}")
+        # Compute Metrics if target_dist can be sampled from (check if sample() method is implemented)
+        if alg.target_dist.can_sample:
+            final_samples = samples_seq[-1]
+            tgt_samps = alg.target_dist.sample(jr.PRNGKey(999), args.samples_for_final_visualization)
+            wass = two_wasserstein(np.array(final_samples), np.array(tgt_samps)) # wasserstein distance
+            print(f"Wasserstein distance (p=2): {wass:.4e}")
+            sink = sinkhorn_distance(
+                torch.tensor(final_samples).clone(), 
+                torch.tensor(np.array(tgt_samps)).clone()
+            ) # sinkhorn distance
+            print(f"Sinkhorn distance : {sink:.4e}")
+        else:
+            wass = float('nan')
+            sink = float('nan')
+            print("Target distribution cannot be sampled from, skipping metric computations.")
 
     # Plot -loss that should converge to ELBO
     if args.target_dist in ['sonar']:
@@ -264,29 +283,70 @@ def main():
         plt.xlabel("K (number of steps)")
         plt.ylabel("-loss estimate")
         plt.title(f"{args.algo} -loss vs K")
-        plt.savefig(f"{args.results_dir}/{args.target}_{args.algo}_loss_vs_K.png")
+        plt.savefig(f"{args.folder_path}/{args.target}_{args.algo}_loss_vs_K.png")
         plt.close()
        
 
+    # Append metrics to JSON
+    append_metrics(args.algo, args.target_dist, delta_logZ if args.if_logZ else float('nan'), wass, sink, target_folder_path)
 
-def summarize_results(results_dir="results", excel_path="metric_results.xlsx"):
+
+
+def summarize_results(target_folder_path, excel_path="metric_results.xlsx"):
+    """
+    Summarize metrics from all JSON files under a single target folder and save to Excel.
+    
+    The function recursively searches for JSON files, extracts Target and Algorithm
+    names from the path/filename, calculates mean metrics, and pivots the results.
+    """
     records = []
-    for fname in glob.glob(os.path.join(results_dir, "delta_logZ_*.txt")):
-        # pattern: delta_logZ_algo_target.txt
-        base = os.path.basename(fname)
-        parts = base.replace(".txt", "").split("_")
-        algo, target = parts[2], parts[3]
-        vals = [float(x.strip()) for x in open(fname)]
-        mean = np.mean(vals)
-        records.append((target, algo, mean))
 
-    df = pd.DataFrame(records, columns=["Target", "Algorithm",
-                                        "Mean ΔlogZ"])
-    pivot = df.pivot(index="Target", columns="Algorithm",
-                    values="Mean ΔlogZ")
-    pivot.to_excel(excel_path)
+    search_path = os.path.join(target_folder_path, "**", "*.json")
+    
+    for json_file in glob.glob(search_path, recursive=True):
+        print(f"Processing {json_file}...")
+
+        # Example path: target_folder_path/TargetName/metrics_AlgoName_TargetName.json
+        target_name = os.path.basename(os.path.dirname(json_file)) 
+        
+        # Get the filename prefix
+        filename_prefix = os.path.splitext(os.path.basename(json_file))[0]
+        
+        # Assuming the format is 'metrics_{algo_name}_{target_name}', extract algo_name.
+        try:
+            parts = filename_prefix.split('_')
+            algo_name = parts[1]
+        except IndexError:
+            # Fallback if the naming convention is violated
+            algo_name = filename_prefix
+
+        with open(json_file, "r") as f:
+            metrics = json.load(f)
+
+        for metric_name, values in metrics.items():
+                
+            mean_val = np.mean(values)
+            
+            records.append((target_name, algo_name, metric_name, mean_val))
+
+    if not records:
+        print(f"No JSON files found in {target_folder_path} or its subdirectories.")
+        return
+
+    # Convert to DataFrame
+    df = pd.DataFrame(records, columns=["Target", "Algorithm", "Metric", "Mean Value"])
+
+    pivot_df = df.pivot_table(
+        index=["Target", "Algorithm"], 
+        columns="Metric", 
+        values="Mean Value"
+    )
+
+    pivot_df.index.names = ['Problem', 'Method']
+
+    # Save to Excel
+    pivot_df.to_excel(excel_path)
     print(f"Summary written to {excel_path}")
-
 
 
 if __name__ == "__main__":

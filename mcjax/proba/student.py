@@ -44,6 +44,8 @@ class Student(LogDensity):
         self.cov_logdet = None
         self._log_Z = None
         self.update_cov(cov=cov, cov_inv=cov_inv, chol=chol)
+
+        self.can_sample = True
                 
     def update_deg(self, deg):
         self.deg = deg
