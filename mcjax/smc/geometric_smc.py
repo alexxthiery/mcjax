@@ -24,9 +24,9 @@ class GeometricSMC():
             *,
             log_gamma_0:LogDensity,
             log_gamma_T:LogDensity,
-            coefs,
-            step_size,
-            num_substeps,
+            coefs: jnp.ndarray,
+            step_size: float,
+            num_substeps: int,
             keep_particles = False):
         
         self.coefs = coefs
@@ -35,12 +35,15 @@ class GeometricSMC():
         self.step_size = step_size
         self.num_substeps = num_substeps # number of substeps for the MC kernel
         self.keep_particles = keep_particles # if True, keep all particles in the SMC chain, otherwise only keep the last one
+        # check step_size and num_substeps are positive
+        assert self.step_size > 0, "Step size must be positive"
+        assert self.num_substeps > 0, "Number of substeps must be positive"
 
     def step(
             self,
             t,
             coefs,              # Temperature (ranging from [0,1])
-            mc_method: str,     # MC method: RWM or MALA
+            mc_method_code: int,     # MC method: RWM or MALA
             state: jax.Array,    # current state
             key: jax.Array,     # random key
             ):
@@ -55,10 +58,10 @@ class GeometricSMC():
         
         ############ Sample particles from (t-1) to t using the RWM kernel
         mc_methods = {
-            'RWM': self.random_walk_batch,
-            'MALA': self.mala_batch
+            0: self.random_walk_batch,
+            1: self.mala_batch
         }
-        mc_function = mc_methods[mc_method]
+        mc_function = mc_methods[mc_method_code]
 
         # array to store acc_rate and step_size
         acc_rate_arr = jnp.zeros(self.num_substeps)
@@ -156,12 +159,11 @@ class GeometricSMC():
         return log_weights 
 
 
-    def run(self,num_particles, key, mc_method):
+    def run(self,num_particles, key, mc_method_code):
         # Initialize the state at t=0 with particles sampled from the initial distribution        
         key, key_ = jr.split(key)
         initial_particles = self.log_gamma_0.sample(key_, num_particles)
         initial_weights = jnp.zeros(num_particles)
-        state = {"particles": initial_particles, "weights": initial_weights}
         # use fori_loop
         if self.keep_particles:
             particles_arr = jnp.zeros((num_particles, self.log_gamma_0.dim, len(self.coefs)))
@@ -180,7 +182,7 @@ class GeometricSMC():
             prev_particles = (particles_arr[:, :, t-1]
                       if self.keep_particles
                       else particles_arr)
-            state = self.step(t, self.coefs, mc_method, (prev_particles, log_weights_arr[:, t-1]), key)
+            state = self.step(t, self.coefs, mc_method_code, (prev_particles, log_weights_arr[:, t-1]), key)
             if self.keep_particles:
                 particles_arr = particles_arr.at[:, :, t].set(state[0])
             else:
@@ -194,14 +196,12 @@ class GeometricSMC():
         return particles_arr, log_weights_arr, step_size_arr, acc_rate_arr
 
     # Calculate adaptively the coefficient for the geometric SMC 
-    def selfadaptive_run(self,num_particles, key, mc_method, max_steps=100):
-        tol = 1e-5
+    def selfadaptive_run(self,num_particles, key, mc_method_code, max_steps=100):
         key, key_ = jr.split(key)
         initial_particles = self.log_gamma_0.sample(key_, num_particles)
         initial_weights = jnp.zeros(num_particles)
         
         dim = self.log_gamma_0.dim
-        num_substeps = self.num_substeps
 
         # Preallocate arrays for up to max_steps iterations.
         if self.keep_particles:
@@ -210,8 +210,8 @@ class GeometricSMC():
         else:
             particles_arr = initial_particles
         log_weights_arr  = jnp.zeros((num_particles, max_steps+1))
-        step_size_arr = jnp.zeros((num_substeps, max_steps))
-        acc_rate_arr  = jnp.zeros((num_substeps, max_steps))
+        step_size_arr = jnp.zeros((self.num_substeps, max_steps))
+        acc_rate_arr  = jnp.zeros((self.num_substeps, max_steps))
         coefs         = jnp.zeros((max_steps+1,))
         
         # Set initial values.
@@ -238,7 +238,7 @@ class GeometricSMC():
             acc_rate = acc_rate_arr[:, t - 1]   
             state = (prev_particles, prev_log_weights, step_size, acc_rate)
             
-            # update coefs
+            # update the next coefficient
             # If t equals max_steps-1, force the new coefficient to be 1.0.
             key, key_ = jr.split(key)
             new_coef = jax.lax.cond(
@@ -249,8 +249,8 @@ class GeometricSMC():
             )
             coefs = coefs.at[t].set(new_coef)
 
-            # Compute new state.
-            state = self.step(t, coefs, mc_method, (prev_particles, prev_log_weights), key)
+            # Compute new state
+            state = self.step(t, coefs, mc_method_code, (prev_particles, prev_log_weights), key)
             new_particles, new_log_weights, step_size, acc_rate = state
 
             # Update preallocated arrays at the current iteration index.
