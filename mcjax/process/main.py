@@ -1,6 +1,8 @@
 # main.py
 
 import argparse
+from ast import For
+import re
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +13,9 @@ import os
 import sys
 sys.path.append('../../')
 import time
+
 from scipy.stats import gaussian_kde
+import numpy as np
 import pandas as pd
 import glob, os
 import torch
@@ -20,6 +24,8 @@ from datetime import datetime
 
 from algo import DDSAlgorithm,IDEMAlgorithm, PISAlgorithm, ControlledMonteCarloDiffusion
 from metrics import MMD_squared,two_wasserstein,sinkhorn_distance
+
+from mcjax.proba.doublewell import DoubleWell
 
 from matplotlib.animation import FFMpegWriter
 import matplotlib.animation as animation
@@ -47,6 +53,7 @@ def parse_args():
     parser.add_argument("--if_logZ",    type=str2bool, default=True)
     parser.add_argument("--seed",       type=int, default=42)
     parser.add_argument("--if_train",   type=str2bool, default=True)
+    parser.add_argument("--save_model", type=str2bool, default=True)
     parser.add_argument("--model_path", type=str, default="model_params.pkl")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument("--sigma_min",  type=float, default=0.5)
@@ -60,33 +67,287 @@ def parse_args():
     parser.add_argument("--debug_fill_buffer", type=str2bool, default=False)
     parser.add_argument("--backdiffusion_true_score", type=str2bool, default=False)
     parser.add_argument("--use_control_in_denominator", type=str2bool, default=True)
-    parser.add_argument("--visualize_and_metrics", type=str2bool, default=True)
+    parser.add_argument("--to_visualize", type=str2bool, default=True)
+    parser.add_argument("--get_metrics", type=str2bool, default=True)
     parser.add_argument("--write_logZ", type=str2bool, default=True)
     parser.add_argument("--set_timestamp", type=str2bool, default=False)
     parser.add_argument("--timestamp", type=str, default="default_timestamp")
     parser.add_argument("--samples_for_final_visualization", type=int, default=10000)
+    parser.add_argument("--loss_type", type=str, default="kl",
+                        choices=["kl", "lv"])
+    parser.add_argument("--sde_ctrl_noise", type=float, default=0.0)
+    parser.add_argument("--do_grid_search", type=str2bool, default=False)
+    parser.add_argument("--dw_draw_marginals", type=str2bool, default=False)
+    parser.add_argument("--dw_draw_well_hist", type=str2bool, default=False)
     return parser.parse_args()
 
-def append_metrics(algo, target, delta_logZ, wass, sink, target_folder_path):
+def append_metrics(algo, target, loss_type, delta_logZ, wass, sink, target_folder_path):
     os.makedirs(target_folder_path, exist_ok=True)
     fname = os.path.join(target_folder_path, f"metrics_{algo}_{target}.json")
 
-    # If file exists, load existing data
     if os.path.exists(fname):
-        with open(fname, "r") as f:
-            data = json.load(f)
+        try:
+            with open(fname, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            data = {}  # Handle empty or corrupted file
     else:
-        data = {"delta_logZ": [], "wasserstein": [], "sinkhorn": []}
+        data = {}
 
-    # Append new results
-    data["delta_logZ"].append(float(delta_logZ))
-    data["wasserstein"].append(float(wass))
-    data["sinkhorn"].append(float(sink))
+    # Ensure the loss_type key and its nested dict exist
+    if loss_type not in data:
+        data[loss_type] = {"delta_logZ": [], "wasserstein": [], "sinkhorn": []}
+    
+    # Ensure all metric keys exist 
+    for metric in ["delta_logZ", "wasserstein", "sinkhorn"]:
+        if metric not in data[loss_type]:
+            data[loss_type][metric] = []
 
-    # Save back
+    data[loss_type]["delta_logZ"].append(float(delta_logZ))
+    data[loss_type]["wasserstein"].append(float(wass))
+    data[loss_type]["sinkhorn"].append(float(sink))
+
     with open(fname, "w") as f:
         json.dump(data, f, indent=4)
-    print(f"Appended new metrics to {fname}")
+    print(f"Appended new metrics to {fname} under loss type '{loss_type}'")
+
+def append_metrics_grid_search(algo, target, loss_type,
+                               delta_logZ, wass, sink,
+                               target_folder_path, K=None, lr=None):
+    """
+    Append metrics for one experiment run into JSON grouped by (algo, loss_type).
+    Structure:
+    {
+        "target_name": {
+            "K100_lr0.001": {
+                "delta_logZ": [...],
+                "wasserstein": [...],
+                "sinkhorn": [...]
+            },
+            ...
+        }
+    }
+    """
+    import os, json
+
+    os.makedirs(target_folder_path, exist_ok=True)
+    fname = os.path.join(target_folder_path, f"metrics_{algo}_{loss_type}.json")
+
+    if os.path.exists(fname):
+        try:
+            with open(fname, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            data = {}
+    else:
+        data = {}
+
+    key_hyper = f"K{K}_lr{lr}"
+    if target not in data:
+        data[target] = {}
+    if key_hyper not in data[target]:
+        data[target][key_hyper] = {"delta_logZ": [], "wasserstein": [], "sinkhorn": []}
+
+    for metric, val in [("delta_logZ", delta_logZ), ("wasserstein", wass), ("sinkhorn", sink)]:
+        data[target][key_hyper][metric].append(float(val))
+
+    with open(fname, "w") as f:
+        json.dump(data, f, indent=4)
+    print(f"Appended metrics for {algo}-{loss_type}-{target} ({key_hyper})")
+
+
+def summarize_results(target_folder_path, excel_path="metric_results.xlsx"):
+    """
+    Summarize metrics from all JSON files under a single target folder and save to Excel.
+    
+    The function recursively searches for JSON files, extracts Target and Algorithm
+    names from the path/filename, calculates mean metrics, and pivots the results.
+    """
+    records = []
+    
+    # Search recursively for all .json files
+    search_path = os.path.join(target_folder_path, "**", "*.json")
+    
+    for json_file in glob.glob(search_path, recursive=True):
+        print(f"Processing {json_file}...")
+
+        target_name = os.path.basename(os.path.dirname(json_file)) 
+        
+        filename_prefix = os.path.splitext(os.path.basename(json_file))[0]
+        
+        try:
+            parts = filename_prefix.split('_')
+            algo_name = parts[1]
+        except IndexError:
+            algo_name = filename_prefix  
+
+        with open(json_file, "r") as f:
+            try:
+                data_all_losses = json.load(f)
+            except json.JSONDecodeError:
+                print(f"  Skipping corrupted file: {json_file}")
+                continue
+
+        for loss_type, metrics in data_all_losses.items():
+            
+            for metric_name, values in metrics.items():
+                if not values: 
+                    mean_val = np.nan
+                else:
+                    mean_val = np.mean(values)
+
+                records.append((target_name, algo_name, loss_type, metric_name, mean_val))
+
+
+    if not records:
+        print(f"No valid JSON data found in {target_folder_path} or its subdirectories.")
+        return
+
+
+    df = pd.DataFrame(records, columns=["Target", "Algorithm", "Loss", "Metric", "Mean Value"])
+
+
+    loss_map = {
+        'lv': 'Log-variance',
+        'kl': 'Kullback-Leibler'
+    }
+    df['Loss'] = df['Loss'].map(loss_map).fillna(df['Loss'])
+
+    pivot_df = df.pivot_table(
+        index=["Target", "Loss", "Algorithm"], 
+        columns="Metric", 
+        values="Mean Value"
+    )
+
+
+    metric_order = ['delta_logZ', 'sinkhorn', 'wasserstein']
+
+    existing_cols = [col for col in metric_order if col in pivot_df.columns]
+    pivot_df = pivot_df.reindex(columns=existing_cols)
+
+    pivot_df.index.names = ['Problem', 'Loss', 'Method']
+    
+    pivot_df = pivot_df.sort_index(level=['Problem', 'Loss', 'Method'])
+
+    pivot_df.to_excel(excel_path)
+    print(f"Summary written to {excel_path}")
+
+
+def grid_summarize(target_folder_path, excel_path="metric_results_grid.xlsx"):
+    """
+    Summarize grid search results across multiple targets.
+    """
+
+    all_records = []
+
+    pattern = os.path.join(target_folder_path, "**", "metrics_*.json")
+    for json_file in glob.glob(pattern, recursive=True):
+        base = os.path.basename(json_file)
+        m = re.match(r"metrics_([a-zA-Z0-9]+)_([a-zA-Z0-9]+)\.json", base)
+        if not m:
+            print(f"Skipping unexpected file: {json_file}")
+            continue
+
+        algo, loss = m.groups()
+
+        try:
+            with open(json_file, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            print(f"Skipping corrupted file: {json_file}")
+            continue
+        for target, hp_dict in data.items():
+            for hp_key, metrics in hp_dict.items():
+                m2 = re.match(r"K(\d+)_lr([0-9.eE+-]+)", hp_key)
+                if not m2:
+                    print(f"Skipping unexpected hyperparam key: {hp_key}")
+                    continue
+
+                K_str, lr_str = m2.groups()
+                K = int(K_str)
+                lr = float(lr_str)
+
+                for metric_name, vals in metrics.items():
+                    if not vals:
+                        continue
+                    all_records.append({
+                        "Method": algo,
+                        "Loss": loss,
+                        "Target": target,
+                        "K": K,
+                        "LR": lr,
+                        "Metric": metric_name,
+                        "Mean": np.mean(vals)
+                    })
+
+    df = pd.DataFrame(all_records)
+    if df.empty:
+        print("No valid metrics found.")
+        return
+
+    # Write results to Excel (one sheet per Method-Loss)
+    writer = pd.ExcelWriter(excel_path, engine="xlsxwriter")
+    workbook = writer.book
+    bold_fmt = workbook.add_format({"bold": True, "font_color": "green"})
+
+    for (method, loss), sub_df in df.groupby(["Method", "Loss"]):
+        pivot = sub_df.pivot_table(
+            index=["Target", "K", "LR"],
+            columns="Metric",
+            values="Mean"
+        )
+        pivot_reset = pivot.reset_index()
+
+        # Determine which metrics are actually present
+        metric_cols = [c for c in ["delta_logZ", "wasserstein", "sinkhorn"]
+                       if c in pivot_reset.columns]
+
+        if not metric_cols:
+            print(f"No metric columns found for {method}-{loss}, skipping.")
+            continue
+        '''
+        Compute MeanRank PER TARGET
+        For each Target separately, pick the best (K, LR).
+        We rank all hyperparameter settings (K, LR) using .rank() on the metric columns.
+        For each (K, LR) row, we average its rank across metrics 
+        '''
+
+        def compute_meanrank_per_target(group):
+            ranks = group[metric_cols].rank()  # rank within this target
+            return ranks.mean(axis=1)          
+
+        meanrank_series = pivot_reset.groupby("Target", group_keys=False).apply(
+            compute_meanrank_per_target
+        )
+
+        pivot_reset["MeanRank"] = meanrank_series
+
+        best_idx_per_target = pivot_reset.groupby("Target")["MeanRank"].idxmin()
+
+        # Mark which rows are "best" for their target
+        pivot_reset["IsBest"] = pivot_reset.index.isin(best_idx_per_target)
+
+        # Sort rows so that same targets are together in the sheet
+        merged = pivot_reset.sort_values(["Target", "MeanRank", "K", "LR"]).reset_index(drop=True)
+
+        sheet_name = f"{method}_{loss}"
+        merged.drop(columns=["IsBest"]).to_excel(writer, sheet_name=sheet_name, index=False)
+
+        # Boldify best row per target in the sheet
+        worksheet = writer.sheets[sheet_name]
+        for i, row in enumerate(merged.itertuples(), start=1): 
+            if row.IsBest:
+                worksheet.set_row(i, None, bold_fmt)
+
+        print(f"\nBest hyperparameters for {method}-{loss}:")
+        for target in merged["Target"].unique():
+            best_rows = merged[(merged["Target"] == target) & (merged["IsBest"])]
+            for _, r in best_rows.iterrows():
+                print(f"Target={target}: K={r['K']}, lr={r['LR']}, MeanRank={r['MeanRank']:.3f}")
+
+    writer.close()
+    print(f"\nGrid results saved to {excel_path}")
+
 
 def main():
     args = parse_args()
@@ -105,7 +366,8 @@ def main():
     args.folder_path = folder_path
 
     # create models dir if not exist
-    os.makedirs("models", exist_ok=True)
+    if args.save_model:
+        os.makedirs("models", exist_ok=True)
 
     # Choose algorithm class
     if args.algo == "dds":
@@ -130,7 +392,7 @@ def main():
         key = jr.PRNGKey(0)
         seq, score_seq = alg.sample_backward_true(key, num_samples=10000)
         figname = "backdiffusion_true_score"
-        alg.visualize_samples(seq, figname=figname)
+        alg.visualize_samples(seq)
         return
 
     # Training or Load
@@ -147,8 +409,10 @@ def main():
         print(f"Tracing+Training finished in {t2 - t1:.2f} seconds.")
         alg.state = final_state  # Update the state with final trained parameters
         # Save parameters
-        with open(args.model_path, "wb") as f:
-            pickle.dump(final_state.params, f)
+        if args.save_model:
+            with open(args.model_path, "wb") as f:
+                pickle.dump(final_state.params, f)
+            print(f"Model parameters saved to {args.model_path}")
 
         # Plot loss curve
         plt.figure()
@@ -156,8 +420,8 @@ def main():
         plt.xlabel("step")
         plt.ylabel("loss")
         plt.legend()
-        plt.title(f"{args.algo} training loss K={args.K} steps={args.num_steps}")
-        plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_loss.png")
+        plt.title(f"{args.algo} training loss K={args.K} steps={args.num_steps} loss type={args.loss_type}")
+        plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_{args.loss_type}_{args.K}_{args.lr}_loss.png")
         plt.close()
 
         if args.algo == "idem" and args.target_dist == "1d":
@@ -218,8 +482,8 @@ def main():
             lines, labels = ax1.get_legend_handles_labels()
             l2, lbl2 = ax2.get_legend_handles_labels()
             ax1.legend(lines + l2, labels + lbl2, loc='upper left')
-            plt.title(f"{args.algo} logZ statistics K={args.K} steps={args.num_steps}")
-            plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_logZ.png")
+            plt.title(f"{args.algo} logZ statistics K={args.K} steps={args.num_steps} loss type={args.loss_type}")
+            plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_{args.loss_type}_{args.K}_{args.lr}_logZ.png")
             plt.close()
 
             # output final logZ estimate
@@ -232,12 +496,14 @@ def main():
     else:
         # Load saved params and wrap into a dummy TrainState
         print(f"Loading model parameters from {args.model_path}")
-        with open(args.model_path, "rb") as f:
-            saved_params = pickle.load(f)
-        alg.state = alg.state.replace(params=saved_params)
+        try:
+            with open(args.model_path, "rb") as f:
+                saved_params = pickle.load(f)
+            alg.state = alg.state.replace(params=saved_params)
+        except Exception as e:
+            print(f"Failed to load model parameters: {e}")
 
-
-    if args.visualize_and_metrics:
+    if args.to_visualize or args.get_metrics or args.dw_draw_marginals or args.dw_draw_well_hist:
         # Sampling
         key, sub = jr.split(key)
         samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=args.samples_for_final_visualization)
@@ -246,8 +512,8 @@ def main():
         
 
         # Visualization 
-        figname = "estimated_score"
-        alg.visualize_samples(samples_seq, figname=figname)
+        if args.to_visualize:
+            alg.visualize_samples(samples_seq)
 
 
         # Compute Metrics if target_dist can be sampled from (check if sample() method is implemented)
@@ -258,97 +524,37 @@ def main():
             print(f"Wasserstein distance (p=2): {wass:.4e}")
             sink = sinkhorn_distance(
                 torch.tensor(final_samples).clone(), 
-                torch.tensor(np.array(tgt_samps)).clone()
-            ) # sinkhorn distance
+                torch.tensor(np.array(tgt_samps)).clone(),
+                max_iters=2000,
+                eps=1e-3
+            ).item() # sinkhorn distance
             print(f"Sinkhorn distance : {sink:.4e}")
         else:
             wass = float('nan')
             sink = float('nan')
             print("Target distribution cannot be sampled from, skipping metric computations.")
 
-    # Plot -loss that should converge to ELBO
-    if args.target_dist in ['sonar']:
-        final_neg_loss = []
-        for K in [10,50,100,200,500]:
-            alg.cfg.K = K   
-            print(f"Computing -loss estimate with K={K}...")    
-            key, sub = jr.split(key)
-            final_state, final_key, losses, logz_vals, logz_vars = alg.train(sub)
-            final_neg_loss.append(-losses[-1])
-        
-        # print -loss against K
-        plt.figure()
-        plt.plot([10,50,100,200,500], final_neg_loss, marker='o')
-        plt.xscale('log')
-        plt.xlabel("K (number of steps)")
-        plt.ylabel("-loss estimate")
-        plt.title(f"{args.algo} -loss vs K")
-        plt.savefig(f"{args.folder_path}/{args.target}_{args.algo}_loss_vs_K.png")
-        plt.close()
        
+        # Append metrics to JSON
+        if args.do_grid_search:
+            append_metrics_grid_search(
+                args.algo, args.target_dist, args.loss_type, 
+                delta_logZ if args.if_logZ else float('nan'), 
+                wass, sink, target_folder_path, args.K, args.lr
+            )
+        else:
+            append_metrics(args.algo, args.target_dist, args.loss_type, delta_logZ if args.if_logZ else float('nan'), wass, sink, target_folder_path)
 
-    # Append metrics to JSON
-    append_metrics(args.algo, args.target_dist, delta_logZ if args.if_logZ else float('nan'), wass, sink, target_folder_path)
+        if args.dw_draw_marginals and args.target_dist == "doublewell":
+            print("Drawing DoubleWell marginals...")
+            # doublewell = DoubleWell()
+            print("delta:", alg.target_dist.delta, "m:", alg.target_dist.m)
+            alg.target_dist.plot_doublewell_marginals(args.folder_path, args.algo, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
 
-
-
-def summarize_results(target_folder_path, excel_path="metric_results.xlsx"):
-    """
-    Summarize metrics from all JSON files under a single target folder and save to Excel.
-    
-    The function recursively searches for JSON files, extracts Target and Algorithm
-    names from the path/filename, calculates mean metrics, and pivots the results.
-    """
-    records = []
-
-    search_path = os.path.join(target_folder_path, "**", "*.json")
-    
-    for json_file in glob.glob(search_path, recursive=True):
-        print(f"Processing {json_file}...")
-
-        # Example path: target_folder_path/TargetName/metrics_AlgoName_TargetName.json
-        target_name = os.path.basename(os.path.dirname(json_file)) 
-        
-        # Get the filename prefix
-        filename_prefix = os.path.splitext(os.path.basename(json_file))[0]
-        
-        # Assuming the format is 'metrics_{algo_name}_{target_name}', extract algo_name.
-        try:
-            parts = filename_prefix.split('_')
-            algo_name = parts[1]
-        except IndexError:
-            # Fallback if the naming convention is violated
-            algo_name = filename_prefix
-
-        with open(json_file, "r") as f:
-            metrics = json.load(f)
-
-        for metric_name, values in metrics.items():
-                
-            mean_val = np.mean(values)
-            
-            records.append((target_name, algo_name, metric_name, mean_val))
-
-    if not records:
-        print(f"No JSON files found in {target_folder_path} or its subdirectories.")
-        return
-
-    # Convert to DataFrame
-    df = pd.DataFrame(records, columns=["Target", "Algorithm", "Metric", "Mean Value"])
-
-    pivot_df = df.pivot_table(
-        index=["Target", "Algorithm"], 
-        columns="Metric", 
-        values="Mean Value"
-    )
-
-    pivot_df.index.names = ['Problem', 'Method']
-
-    # Save to Excel
-    pivot_df.to_excel(excel_path)
-    print(f"Summary written to {excel_path}")
-
-
+        if args.dw_draw_well_hist and args.target_dist == "doublewell":
+            print("Drawing DoubleWell well histogram...")
+            # doublewell = DoubleWell()
+            alg.target_dist.plot_doublewell_well_hist(args.folder_path, args.algo, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
 if __name__ == "__main__":
     print(f"Available devices: {jax.devices()}")
     jax.config.update("jax_platform_name", "gpu")

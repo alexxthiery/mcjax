@@ -16,10 +16,11 @@ from jax.scipy.special import logsumexp
 from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
+from mcjax.proba.banana2d import Banana2D
 from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40, GMMFixed
 from mcjax.proba.doublewell import DoubleWell
 from mcjax.proba.log_gauss_pines import LogGaussPines
-from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss, SupervisedScoreMatchingLoss
+from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss
 from trainer import Trainer, InnerTrainer
 from mcjax.proba.sonar import BayesianLogisticTarget
 
@@ -75,6 +76,10 @@ class BaseAlgorithm(ABC):
         elif config.target_dist == 'funnel':
             self.target_dist = NealFunnel(sigma_x=3.0, dim=2)
             self.data_dim = 2
+
+        elif config.target_dist == 'banana2d':
+            self.target_dist = Banana2D(noise_std=0.1)
+            self.data_dim = 2
         
         elif config.target_dist == 'pines':
             self.target_dist = LogGaussPines(grid_dim=40, use_whitened=False)
@@ -108,6 +113,13 @@ class BaseAlgorithm(ABC):
 
         # make the OU process
         self.ou = OU(T = T, alpha=alpha, sigma=config.sigma, init_dist=self.init_dist)
+
+        # Set a unified optimizer
+        self.opt = optax.chain(
+            optax.clip_by_global_norm(5.0),
+            optax.adamw(learning_rate=config.lr, b1=0.9, b2=0.99, weight_decay=1e-4)
+        )
+
 
 
     def make_score_fn(self):
@@ -199,7 +211,7 @@ class BaseAlgorithm(ABC):
         """
         pass
 
-    def visualize_samples(self, sample_seq, figname):
+    def visualize_samples(self, sample_seq):
         """
         Generic 1D / 2D visualization of the reverse chain. 
         sample_seq is expected to have shape (K, num_samples, data_dim).
@@ -253,7 +265,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.folder_path}/{self.cfg.target_dist}/density_evolution_{self.cfg.algo}_{figname}.mp4'
+            fname = f'{self.cfg.folder_path}/{self.cfg.target_dist}/density_evolution_{self.cfg.algo}_{self.cfg.loss_type}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
@@ -286,7 +298,7 @@ class BaseAlgorithm(ABC):
 
             # --- Right: target density (fixed contour) ---
 
-            contour_right = ax_right.contourf(X, Y, Ztarg_norm.T, levels=30, cmap="viridis")
+            contour_right = ax_right.contourf(X, Y, Ztarg_norm, levels=30, cmap="viridis")
             ax_right.set_title("Target Density")
             ax_right.set_xlabel("x1")
             ax_right.set_ylabel("x2")
@@ -332,7 +344,7 @@ class BaseAlgorithm(ABC):
             )
 
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f"{self.cfg.folder_path}/{self.cfg.target_dist}/sample_movement_{self.cfg.algo}_{figname}.mp4"
+            fname = f"{self.cfg.folder_path}/{self.cfg.target_dist}/sample_movement_{self.cfg.algo}_{self.cfg.loss_type}.mp4"
             ani.save(fname, writer=writer)
             plt.close(fig)
 
@@ -354,6 +366,7 @@ class DDSAlgorithm(BaseAlgorithm):
             self.model = ResBlockModel(dim=self.data_dim, T=config.K)
         else:
             raise ValueError(f"Unknown model_type: {config.network_name}")
+        
 
         # initialize network params
         key = jr.PRNGKey(config.seed)
@@ -361,8 +374,6 @@ class DDSAlgorithm(BaseAlgorithm):
         dummy_x = jnp.zeros((config.batch_size, self.data_dim))
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.int32)
         self.params = self.model.init(sub, dummy_x, dummy_t)
-
-        self.opt = optax.chain(optax.clip_by_global_norm(5.0), optax.adamw(config.lr, b1=0.5, b2=0.9))
         
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
@@ -375,7 +386,7 @@ class DDSAlgorithm(BaseAlgorithm):
         self.loss_obj = self.make_loss()
 
     def make_loss(self):
-        return DDSLoss(add_score=self.cfg.add_score)
+        return DDSLoss(add_score=self.cfg.add_score, loss_type=self.cfg.loss_type, sde_ctrl_noise=self.cfg.sde_ctrl_noise)
 
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
@@ -431,26 +442,6 @@ class DDSAlgorithm(BaseAlgorithm):
 
         return logZ
 
-
-        """
-        propagate forward from mixed Gaussian -> approx standard Gaussian
-        call visualize_samples to animate that path,then swap init/target
-        """
-        # get the forward trajectory
-        sample_seq = self.sample_forward(rng_key, num_samples)
-
-        # swap init_dist <-> target_dist
-        orig_init   = self.init_dist
-        orig_target = self.target_dist
-        self.init_dist   = orig_target
-        self.target_dist = orig_init
-
-        # visualize
-        self.visualize_samples(sample_seq,figname="forward")
-
-        # restore
-        self.init_dist   = orig_init
-        self.target_dist = orig_target
     
 class IDEMAlgorithm(BaseAlgorithm):
     """
@@ -527,8 +518,6 @@ class IDEMAlgorithm(BaseAlgorithm):
         initial_params = self.model.init(sub, dummy_x, dummy_t)
 
          
-        # Set up optimizer (Adam) and Flax train state
-        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=initial_params,
@@ -911,8 +900,6 @@ class PISAlgorithm(BaseAlgorithm):
         dummy_x = jnp.zeros((config.batch_size, self.data_dim))
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(sub, dummy_x, dummy_t)
-
-        self.opt = optax.chain(optax.clip(50.0), optax.adamw(config.lr))
         
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply, params=self.params, tx=self.opt
@@ -923,7 +910,7 @@ class PISAlgorithm(BaseAlgorithm):
         self.loss_obj    = self.make_loss()
 
     def make_loss(self):
-        return PISLoss(add_score=self.cfg.add_score)
+        return PISLoss(add_score=self.cfg.add_score, loss_type=self.cfg.loss_type, sde_ctrl_noise=self.cfg.sde_ctrl_noise)
     
     
     @partial(jax.jit, static_argnums=(0, 3))
@@ -1034,7 +1021,6 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
         dummy_t = jnp.zeros((config.batch_size,), dtype=jnp.float32)
         self.params = self.model.init(key, dummy_x, dummy_t)
 
-        self.opt = optax.chain(optax.clip(50.0), optax.clip_by_global_norm(1.0), optax.adamw(config.lr))
         self.state = train_state.TrainState.create(
             apply_fn=self.model.apply,
             params=self.params,
@@ -1049,7 +1035,9 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
     def make_loss(self):
         return CMCDLoss(
             use_control_in_denominator = self.use_control_in_denominator,
-            add_score=self.cfg.add_score
+            add_score=self.cfg.add_score,
+            loss_type=self.cfg.loss_type,
+            sde_ctrl_noise=self.cfg.sde_ctrl_noise
         )
     
     def sample(self, params, rng_key, num_samples):

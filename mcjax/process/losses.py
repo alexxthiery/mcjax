@@ -30,8 +30,29 @@ class DDSLoss(BaseLoss):
     """
     Reverse KL / Log Variance losses for DDS.
     """
-    def __init__(self, add_score: bool = False):
+    def __init__(self, 
+                 add_score: bool = False, 
+                 loss_type: str = 'kl',
+                 sde_ctrl_noise: float = 0.0):
+        """
+        Args:
+          add_score: bool, whether to add the zero-expectation score term.
+          loss_type: str, 'kl' for reverse KL loss or 'lv' for log-variance loss.
+          sde_ctrl_noise: float, stddev of Gaussian noise added to the
+                          detached SDE control (path) for exploration.
+                          Only used if loss_type='lv'.
+        """
         self.add_score = add_score
+        if loss_type not in ['kl', 'lv']:
+            raise ValueError(f"Unknown loss_type: {loss_type}. Must be 'kl' or 'lv'.")
+        self.loss_type = loss_type
+        self.sde_ctrl_noise = sde_ctrl_noise
+
+        if self.sde_ctrl_noise > 0.0 and self.loss_type == 'kl':
+            print(
+                "Warning: DDSLoss sde_ctrl_noise > 0.0 but loss_type is 'kl'. "
+                "SDE noise is only applied for 'lv' loss and will be ignored."
+            )
 
     def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
         K = process.K
@@ -39,40 +60,48 @@ class DDSLoss(BaseLoss):
 
         # sample y0 ~ init_dist
         key, sub = jr.split(key)
-        y0 = init_dist.sample(sub, batch_size)*sigma  # scale by sigma
+        y0 = init_dist.sample(sub, batch_size)
 
         def scan_step(carry, k):
             y_k, r_k, key = carry
-            key, sub2 = jr.split(key)
-            eps = jr.normal(sub2, shape=y_k.shape)
+            key_next, key_eps, key_noise = jr.split(key, 3)
+            eps = jr.normal(key_eps, shape=y_k.shape)
 
             idx = K - 1 - k
             alpha_Kmk = process.alpha[idx]
             sqrt1m = jnp.sqrt(1.0 - alpha_Kmk)
             lam = 1.0 - sqrt1m
 
-            s = score_fn(params, idx, y_k)  
-            # reverse‐OU update
+            s_attached = score_fn(params, idx, y_k)
+            if self.loss_type == 'kl':
+                s_path = s_attached
+                s_loss = s_attached
+            
+            else: # self.loss_type == 'lv'
+                s_detached = jax.lax.stop_gradient(s_attached)
+
+                # This 'if' is also static and evaluated at COMPILE time
+                if self.sde_ctrl_noise > 0.0:
+                    noise = jr.normal(key_noise, shape=s_detached.shape)
+                    s_path = s_detached + self.sde_ctrl_noise * noise
+                else:
+                    s_path = s_detached
+                
+                s_loss = s_attached
+
             y_next = (sqrt1m * y_k
-                      + 2.0 * (sigma**2) * lam * s
+                      + 2.0 * (sigma**2) * lam * s_path
                       + sigma * jnp.sqrt(alpha_Kmk) * eps)
 
-            # accumulate path‐integral term
-            main_term = (2.0 * sigma**2) * (lam**2 / alpha_Kmk) * jnp.sum(s**2, axis=-1)
-
-            ##########################################################
-            # normalize the weights (lam**2 / alpha_Kmk) across t 
-            # raw_w = (lam**2 / alpha_Kmk)
-            # norm_w = raw_w / (jnp.mean(raw_w) + 1e-12)   # normalize across t 
-            # main_term = (2.0 * sigma**2) * norm_w * jnp.sum(s**2, axis=-1) 
+            main_term = (2.0 * sigma**2) * (lam**2 / alpha_Kmk) * jnp.sum(s_loss**2, axis=-1)
 
             if self.add_score:
-                zero_exp_term = 2.0 * sigma * jnp.sqrt(lam**2 / alpha_Kmk) * jnp.sum(s * eps, axis=-1)
+                zero_exp_term = 2.0 * sigma * jnp.sqrt(lam**2 / alpha_Kmk) * jnp.sum(s_loss * eps, axis=-1)
                 r_next = r_k + main_term + zero_exp_term
             else:
                 r_next = r_k + main_term
 
-            return (y_next, r_next, key), None
+            return (y_next, r_next, key_next), None
 
         r0 = jnp.zeros(batch_size)
         (yK, rK, _), _ = jax.lax.scan(
@@ -85,10 +114,14 @@ class DDSLoss(BaseLoss):
         log_ref = init_dist.batch(yK)
         log_targ = target_dist.batch(yK)
 
-        loss = jnp.mean(rK + log_ref - log_targ)
+        w_batch = rK + log_ref - log_targ
 
-        # jax.debug.print("rK mean: {}, log_ref mean: {}, log_targ mean: {}", jnp.mean(rK), jnp.mean(log_ref), jnp.mean(log_targ))
+        if self.loss_type == 'kl':
+            loss = jnp.mean(w_batch)
+        else: # for self.loss_type == 'lv'
+            loss = jnp.var(w_batch)
 
+        
         return loss
 
 class IDEMLoss(BaseLoss):
@@ -264,8 +297,12 @@ class IDEMLoss(BaseLoss):
 
 class PISLoss(BaseLoss):
 
-    def __init__(self, add_score: bool = False):
+    def __init__(self, add_score: bool = False, loss_type: str = 'kl', sde_ctrl_noise: float = 0.0):
         self.add_score = add_score # NO NEED, just to align with other losses
+        self.loss_type = loss_type
+        self.sde_ctrl_noise = sde_ctrl_noise
+        if self.sde_ctrl_noise > 0.0 and self.loss_type == 'kl':
+            print("Warning: PISLoss sde_ctrl_noise > 0.0 but loss_type is 'kl'. Will be ignored.")
 
     def __call__(self, params, key, process,init_dist, target_dist, score_fn, batch_size, **kwargs):
         # forward controlled SDE from x0 ~ ν
@@ -277,13 +314,30 @@ class PISLoss(BaseLoss):
         running_cost = jnp.zeros(batch_size) # first term in the loss function
         def body(carry, t):
             x, running, key = carry
-            u = score_fn(params, t, x)
-            running = running + 0.5*jnp.sum(u**2, axis=-1)*self.delta_t
+            key_next, key_dw, key_noise = jr.split(key, 3)
 
-            key, sub = jr.split(key)
-            dW = jr.normal(sub, x.shape)*jnp.sqrt(self.delta_t)
-            x  = x + u*self.delta_t + dW
-            return (x, running, key), None
+            u_attached = score_fn(params, t, x)
+
+            if self.loss_type == 'kl':
+                u_path = u_attached
+                u_loss = u_attached
+            else: # for 'lv'
+                u_detached = jax.lax.stop_gradient(u_attached)
+                if self.sde_ctrl_noise > 0.0:
+                    noise = jr.normal(key_noise, shape=u_detached.shape)
+                    u_path = u_detached + self.sde_ctrl_noise * noise
+                else:
+                    u_path = u_detached
+                u_loss = u_attached
+
+            running = running + 0.5 * jnp.sum(u_loss**2, axis=-1) * self.delta_t
+
+            # 4. Update Path (using u_path)
+            dW = jr.normal(key_dw, x.shape) * jnp.sqrt(self.delta_t)
+            x_next = x + u_path * self.delta_t + dW
+            
+            return (x_next, running, key_next), None
+
 
         times = jnp.arange(self.n_steps, dtype=jnp.float32)
         (xT, running, _), _ = jax.lax.scan(body, (x, running_cost, key), times)
@@ -295,8 +349,15 @@ class PISLoss(BaseLoss):
                 - 0.5 * jnp.sum(xT**2, axis=-1) / var_total
         log_p  = target_dist.batch(xT)
         psi    = log_qT - log_p
+        w_batch = running + psi
 
-        return jnp.mean(running + psi)
+        if self.loss_type == 'kl':
+            loss = jnp.mean(w_batch)
+        else: # for self.loss_type == 'lv'
+            w_mean_baseline = jax.lax.stop_gradient(jnp.mean(w_batch))
+            loss = jnp.mean((w_batch - w_mean_baseline) ** 2)
+
+        return loss
 
 class CMCDLoss(BaseLoss):
     """
@@ -312,9 +373,14 @@ class CMCDLoss(BaseLoss):
     and var = 2 * sigma^2 * Δt.
 
     """
-    def __init__(self, use_control_in_denominator: bool, add_score: bool = False):
+    def __init__(self, use_control_in_denominator: bool, add_score: bool = False,\
+                 loss_type: str = 'kl', sde_ctrl_noise: float = 0.0):
         self.use_ctrl_den = use_control_in_denominator
         self.add_score = add_score
+        self.loss_type = loss_type
+        self.sde_ctrl_noise = sde_ctrl_noise
+        if self.sde_ctrl_noise > 0.0 and self.loss_type == 'kl':
+            print("Warning: CMCDLoss sde_ctrl_noise > 0.0 but loss_type is 'kl'. Will be ignored.")
 
     def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
         n_steps = process.K
@@ -331,20 +397,27 @@ class CMCDLoss(BaseLoss):
         # forward Euler-Maruyama scan 
         def forward_step(carry, t):
             x, key = carry
-            key, sub = jr.split(key)
+            key_next, key_noise_sde, key_noise_ctrl = jr.split(key, 3)
             t_norm = jnp.array(t, dtype=jnp.float32) / jnp.array(n_steps, dtype=jnp.float32)
 
-            u = score_fn(params, t, x)  
+            u_attached = score_fn(params, t, x)  
+            gradp = (1.0 - t_norm) * init_dist.grad_batch(x) + t_norm * target_dist.grad_batch(x) 
 
-            # geometric interpolation of score between init and target (\pi_t)
-            gradp = (1.0 - t_norm) * init_dist.grad_batch(x) + t_norm * target_dist.grad_batch(x)
+            if self.loss_type == 'kl':
+                u_path = u_attached
+            else: # 'lv'
+                u_detached = jax.lax.stop_gradient(u_attached)
+                if self.sde_ctrl_noise > 0.0:
+                    noise = jr.normal(key_noise_ctrl, shape=u_detached.shape)
+                    u_path = u_detached + self.sde_ctrl_noise * noise
+                else:
+                    u_path = u_detached
+            
+            noise_sde = jr.normal(key_noise_sde, x.shape) * jnp.sqrt(2.0 * sigma2 * delta_t)
+            x_next = x + (sigma2 * gradp + u_path) * delta_t + noise_sde 
 
-            # forward step
-            noise = jr.normal(sub, x.shape) * jnp.sqrt(2.0 * sigma2 * delta_t)
-            x_next = x + (sigma2 * gradp + u) * delta_t + noise
-
-            out = (x, x_next, u, gradp)
-            return (x_next, key), out
+            out = (x, x_next, u_attached, gradp) 
+            return (x_next, key_next), out
 
         times = jnp.arange(n_steps)  
         (xK, _), forward_vals = jax.lax.scan(forward_step, (x0, key), times)
@@ -395,88 +468,13 @@ class CMCDLoss(BaseLoss):
 
         # endpoints
         log_pT = target_dist.batch(xK)    
-        log_ratio = log_p0 - log_pT + trans_sum  
-        # test if x, log_pT or trans_sum contain NaNs (jax.cond)
-        # jax.debug.print("x = {x}", x=states[:,14,:])
-        # jax.debug.print("gradpT = {g}", g=gradps[:,14,:])
-        # jax.debug.print("size = {s}", s=states.shape)
-
-        # jax.lax.cond(jnp.any(jnp.isnan(states)), lambda: jax.debug.print("x contains NaNs"), lambda: None)
-        # jax.lax.cond(jnp.any(jnp.isnan(log_pT)), lambda: jax.debug.print("log_pT contains NaNs"), lambda: None)
-        # jax.lax.cond(jnp.any(jnp.isnan(trans_sum)), lambda: jax.debug.print("trans_sum contains NaNs"), lambda: None)
-        # inspect states (print one element in the batch)
-        # jax.debug.print("x: {x}", x=states[:,0,:])
-        # jax.debug.print("gradp_t: {g}", g=gradps[:,0,:])
-        # jax.debug.print("u_t: {u}", u=controls[:,0,:])
+        w_batch = log_p0 - log_pT + trans_sum  
 
 
-        return jnp.mean(log_ratio)
-
-
-class SupervisedScoreMatchingLoss(BaseLoss):
-    '''
-    For debugging purposes, this loss computes the supervised score matching loss(the true loss) for a mixture of Gaussians.
-    It is used to verify the correctness of the score function.
-    '''
-    def __init__(self, mu, comp_sigmas, weights, ou, data_dim):
-        self.mu = mu
-        self.comp_sigmas = comp_sigmas
-        self.weights = weights
-        self.ou = ou
-        self.data_dim = data_dim
-        self.add_score = False  # Not used in this loss, just to align with other losses
-
-        one_minus_alpha = 1.0 - self.ou.alpha
-        cumprod = jnp.cumprod(one_minus_alpha)    
-        self.a = jnp.concatenate([jnp.array([1.0]), cumprod[:-1]], axis=0)  
-
-    def __call__(self, params, key, process, init_dist, target_dist, score_fn, batch_size, **kwargs):
-        K = process.K
-        key, sub = jr.split(key)
-        x = jr.normal(sub, (batch_size, self.data_dim))
-        key, sub = jr.split(key)
-        t = jr.randint(sub, (batch_size,), minval=0, maxval=K)
-
-        s_pred = score_fn(params, t, x)
-        s_true = self.mixture_score(x, t)
-
-        return jnp.mean(jnp.sum((s_pred - s_true) ** 2, axis=-1))
-    
-    def mixture_score(self, x, k):
-        """
-        Compute the score function in OU process for 1d (isotropic) mixed-gaussian initial distribution.
-        """
-        # x:   of shape (batch)
-        # k:   integer time index
-        # mu:  array (n_comp, 1)
-        # comp_sigmas: array (n_comp,)  # component std devs
-        # weights: array (n_comp,)
-    
-        a_k = jnp.take(self.a, k)
-
-        sqrt_a = jnp.sqrt(a_k)[:, None, None]       # (batch, 1, 1)
-        m_k = sqrt_a * self.mu[None, :, :]    # (batch, n_comp, data_dim)
-        v_k = (
-            a_k[:, None] * (self.comp_sigmas**2)[None, :]
-            + (1 - a_k)[:, None] * (self.ou.sigma**2)
-        )                                      # (batch, n_comp)
-
-        # Expand x for components
-        x_exp = x[:, None, :]                  # (batch, 1, data_dim)
-        v_exp = v_k[:, :, None]                # (batch, n_comp, 1)
-        w_exp = self.weights[None, :, None]    # (1, n_comp, 1)
-    
-        # Compute Gaussian PDFs: shape (batch, n_comp, data_dim)
-        diffs = m_k - x_exp                    # (batch, n_comp, data_dim)
-        normalizer = jnp.sqrt(2 * jnp.pi * v_exp)
-        exps = jnp.exp(-0.5 * (diffs**2) / v_exp) / normalizer
-
-        # Weighted mixture densities (per‑dim)
-        pis = w_exp * exps                     # (batch, n_comp, data_dim)
-
-        # Numerator: ∑_i [ w_i N_i(x) * (m_i - x) / v_i ]
-        numer = jnp.sum(pis * (diffs / v_exp), axis=1)   # (batch, data_dim)
-        # Denominator: ∑_i [ w_i N_i(x) ]
-        denom = jnp.sum(pis, axis=1)                    # (batch, data_dim)
-    
-        return numer / denom                            # (batch, data_dim)
+        if self.loss_type == 'kl':
+            loss = jnp.mean(w_batch)
+        else: # self.loss_type == 'lv'
+            w_mean_baseline = jax.lax.stop_gradient(jnp.mean(w_batch))
+            loss = jnp.mean((w_batch - w_mean_baseline) ** 2)
+            
+        return loss

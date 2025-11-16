@@ -7,7 +7,7 @@ algo='mcd' # 'dds'： Denoising Diffusion Sampling;
             # 'pis':path integral sampler; 
             #'idem': Iterative Denoising Estimation Method; 
             # 'mcd': Monte Carlo Denoising(Set use_control_in_denominator to true for CMCD, false for MCD)
-target_dist='pines' # 'gmm40': 40-component Gaussian Mixture Model; 
+target_dist='doublewell' # 'gmm40': 40-component Gaussian Mixture Model; 
                 # 'gmmfixed': Fixed 2-d gaussian with 9 components;
                 # '1d': 1-d Gaussian Mixture Model； 
                 # 'funnel': 2-d Funnel distribution;
@@ -21,19 +21,25 @@ variable_ts=false # Use variable time steps; Always set this to false: No need t
 K=200 # Number of steps in the process 
 T=1 # Time 
 sigma=1.0 # Noise scale for the backward process
-lr=1e-5 # Learning rate
-batch_size=400 # Batch size
-num_steps=20 # Number of steps for training
+lr=1e-4 # Learning rate
+batch_size=256 # Batch size
+num_steps=3000 # Number of steps for training
 if_logZ=true # calculate logZ during training
+save_model=false # Whether to save the trained model parameters
 seed=0 # Random seed for reproducibility
 if_train=true # Whether to train the model
 model_path='model_params.pkl' # Path to save the model parameters
 results_dir='results' # Path to save the results
-visualize_and_metrics=true # Whether to do visualization and metrics at the end of training
+to_visualize=true # Whether to do visualization at the end of training
+get_metrics=true # Whether to calculate metrics at the end of training
 write_logZ=false # Whether to write logZ to txt file
 set_timestamp=false # Whether to set a custom timestamp for saving results
-samples_for_final_visualization=1000 # Number of samples for final visualization
-do_visualization=true # Whether to do visualization at the end of training
+samples_for_final_visualization=5000 # Number of samples for final visualization
+loss_type='kl' # 'kl': KL divergence loss; 'lv': Least variance loss
+sde_ctrl_noise=0.0 # float, stddev of Gaussian noise added to the detached SDE control (path) for exploration. Only used if loss_type='lv'.
+do_grid_search=false # Whether this is called to do grid search of hyperparameters
+dw_draw_marginals=true # Whether to draw DoubleWell marginals (1D and 2D) at the end of training
+dw_draw_well_hist=true # Whether to draw DoubleWell well histogram at the end of training
 
 ############################################
 # ----------- For IDEM -----------
@@ -69,6 +75,7 @@ python main.py \
     --batch_size $batch_size \
     --num_steps $num_steps \
     --if_logZ $if_logZ \
+    --save_model $save_model \
     --seed $seed \
     --if_train $if_train \
     --model_path $model_path \
@@ -83,8 +90,14 @@ python main.py \
     --num_samples_for_sk $num_samples_for_sk \
     --debug_fill_buffer $debug_fill_buffer \
     --use_control_in_denominator $use_control_in_denominator \
-    --visualize_and_metrics $visualize_and_metrics \
+    --to_visualize $to_visualize \
+    --get_metrics $get_metrics \
     --write_logZ $write_logZ \
     --set_timestamp $set_timestamp \
     --samples_for_final_visualization $samples_for_final_visualization \
-    --do_visualization $do_visualization
+    --loss_type $loss_type \
+    --sde_ctrl_noise $sde_ctrl_noise \
+    --do_grid_search $do_grid_search \
+    --dw_draw_marginals $dw_draw_marginals \
+    --dw_draw_well_hist $dw_draw_well_hist 
+    `
