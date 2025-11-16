@@ -27,7 +27,9 @@ class GeometricSMC():
             coefs: jnp.ndarray,
             step_size: float,
             num_substeps: int,
-            keep_particles = False):
+            keep_particles = False,
+            max_step = 1000,
+            ess_normalized_target = 0.6):
         
         self.coefs = coefs
         self.log_gamma_0 = log_gamma_0
@@ -38,6 +40,9 @@ class GeometricSMC():
         # check step_size and num_substeps are positive
         assert self.step_size > 0, "Step size must be positive"
         assert self.num_substeps > 0, "Number of substeps must be positive"
+
+        self.max_step = max_step # maximum number of steps for self-adaptive SMC
+        self.ess_normalized_target = ess_normalized_target # target normalized ESS for self-adaptive SMC
 
     def step(
             self,
@@ -51,6 +56,15 @@ class GeometricSMC():
         ######## Compute weights with the ratio of densities: gamma_t(x_{t-1}) / gamma_{t-1}(x_{t-1})
         particles, _ = state
         updated_log_weights = self.compute_weights(t,coefs,particles)
+
+        # build a diagonal proposal covariance from the previous step’s particles
+        eps = 1e-6  # jitter to keep PD
+        diag_var = jnp.var(particles, axis=0) + eps                              
+        mean_var = jnp.mean(diag_var)  
+        diag_var_norm = diag_var / mean_var 
+        alpha = 0.2 # blending factor
+        proposal_cov = jnp.diag((1 - alpha) * diag_var_norm + alpha * jnp.ones_like(diag_var_norm))
+
         
         ############ Resampling 
         key, key_ = jr.split(key)
@@ -68,17 +82,18 @@ class GeometricSMC():
         step_size_arr = jnp.zeros(self.num_substeps)
 
         # use fori_loop to perform multiple substeps
-        carry = (new_particles, key, self.step_size, step_size_arr, acc_rate_arr)
+        carry = (new_particles, key, self.step_size, step_size_arr, acc_rate_arr, proposal_cov)
         def body_fun(i, carry):
-            particles, key, step_size, step_size_arr, acc_rate_arr = carry
+            particles, key, step_size, step_size_arr, acc_rate_arr, proposal_cov = carry
             key, key_ = jr.split(key)
 
-            new_particles, step_size, acc_rate = mc_function(t, coefs, particles, key_, step_size, if_adjust_step_size = (i==0))
+            new_particles, step_size, acc_rate = mc_function(t, coefs, particles, key_, step_size,\
+                                                              if_adjust_step_size = (i==0), cov=proposal_cov)
             step_size_arr = step_size_arr.at[i].set(step_size)
             acc_rate_arr = acc_rate_arr.at[i].set(acc_rate)
-            return (new_particles, key, step_size, step_size_arr, acc_rate_arr)
+            return (new_particles, key, step_size, step_size_arr, acc_rate_arr, proposal_cov)
         
-        new_particles, _ ,_, step_size_arr, acc_rate_arr = jax.lax.fori_loop(0, self.num_substeps, body_fun, carry)
+        new_particles, _ ,_, step_size_arr, acc_rate_arr, _ = jax.lax.fori_loop(0, self.num_substeps, body_fun, carry)
         return (new_particles, updated_log_weights, step_size_arr, acc_rate_arr)
     
     def resample(self, particles: jnp.ndarray, log_weights: jnp.ndarray, key: jax.Array):
@@ -94,40 +109,31 @@ class GeometricSMC():
         return resampled_particles
     
     # Random walk Metropolis kernel
-    def random_walk_batch(self, t, coefs, particles, key, step_size, if_adjust_step_size):
+    def random_walk_batch(self, t, coefs, particles, key, step_size, if_adjust_step_size, cov):
         logdensity = LogDensityGeneral(logdensity = lambda x: coefs[t] * self.log_gamma_T.logdensity(x) \
             + (1 - coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
-        rwm = Rwm(logtarget=logdensity, step_size=step_size)
+        rwm = Rwm(logtarget=logdensity, step_size=step_size, cov=cov)
         state = RwmState(x=particles, logdensity=logdensity.batch(particles))
         max_iter = 5
         args = (state, key, step_size, max_iter)
 
-        # Adaptive step size only at the first temperature
+        # Adaptive step size only at the first substep of each step
         new_particles, stats = jax.lax.cond(
-        if_adjust_step_size,
-        rwm.adaptive_step,
-        rwm.step,
-        operand=args
+            if_adjust_step_size,
+            rwm.adaptive_step,
+            rwm.step,
+            operand=args
         )
         # self.step_size = stats.step_size # update the step size
         return new_particles.x, stats.step_size, stats.acc_rate
 
     # MALA kernel 
-    def mala_batch(self, t, coefs, particles, key, step_size, if_adjust_step_size):
+    def mala_batch(self, t, coefs, particles, key, step_size, if_adjust_step_size, cov):
         logdensity = LogDensityGeneral(logdensity = lambda x: coefs[t] * self.log_gamma_T.logdensity(x) \
             + (1 - coefs[t]) * self.log_gamma_0.logdensity(x), dim=particles.shape[1])
-        # Pilot RWM chain to estimate per-coordinate variances at π_t
-        # pilot_steps = 20
-        # rwm = Rwm(logtarget=logdensity, step_size=step_size)
-        # state_rwm = RwmState(x=particles, logdensity=logdensity.batch(particles))
-        # key_pilot = key
-        # for _ in range(pilot_steps):
-        #     state_rwm, _ = rwm.step((state_rwm, key_pilot, step_size, 0))
-        #     key_pilot, _ = jr.split(key_pilot)
-        # pilot_samples = state_rwm.x
-        # var_pilot = jnp.var(pilot_samples, axis=0) + 1e-8
-        # mass_inv = 1.0 / var_pilot    
-        mass_inv = None
+ 
+        # mass_inv = None
+        mass_inv = cov 
 
         # Create MALA with that frozen mass matrix
         mala = Mala(
@@ -139,12 +145,12 @@ class GeometricSMC():
         max_iter = 5
         args = (state, key, step_size, max_iter)
 
-        # Adaptive step size only at the first temperature
+        # Adaptive step size only at the first substep of each step
         new_particles, stats = jax.lax.cond(
-        if_adjust_step_size,
-        mala.adaptive_step,
-        mala.step,
-        operand=args
+            if_adjust_step_size,
+            mala.adaptive_step,
+            mala.step,
+            operand=args
         )
         # self.step_size = stats.step_size # update the step size
         return new_particles.x, stats.step_size, stats.acc_rate
@@ -196,12 +202,11 @@ class GeometricSMC():
         return particles_arr, log_weights_arr, step_size_arr, acc_rate_arr
 
     # Calculate adaptively the coefficient for the geometric SMC 
-    def selfadaptive_run(self,num_particles, key, mc_method_code, max_steps=100):
+    def selfadaptive_run(self,num_particles, key, mc_method_code):
         key, key_ = jr.split(key)
         initial_particles = self.log_gamma_0.sample(key_, num_particles)
         initial_weights = jnp.zeros(num_particles)
         
-        dim = self.log_gamma_0.dim
 
         # Preallocate arrays for up to max_steps iterations.
         if self.keep_particles:
@@ -209,10 +214,10 @@ class GeometricSMC():
             particles_arr = particles_arr.at[:, :, 0].set(initial_particles)
         else:
             particles_arr = initial_particles
-        log_weights_arr  = jnp.zeros((num_particles, max_steps+1))
-        step_size_arr = jnp.zeros((self.num_substeps, max_steps))
-        acc_rate_arr  = jnp.zeros((self.num_substeps, max_steps))
-        coefs         = jnp.zeros((max_steps+1,))
+        log_weights_arr  = jnp.zeros((num_particles, self.max_step+1))
+        step_size_arr = jnp.zeros((self.num_substeps, self.max_step))
+        acc_rate_arr  = jnp.zeros((self.num_substeps, self.max_step))
+        coefs         = jnp.zeros((self.max_step+1,))
         
         # Set initial values.
         log_weights_arr   = log_weights_arr.at[:, 0].set(initial_weights)
@@ -223,8 +228,9 @@ class GeometricSMC():
 
         def cond_fun(carry):
             t, coefs, *_ = carry
-            # Continue while t < max_steps and the last computed coef is below threshold.
-            return (t < max_steps) & (coefs[t - 1] < 1.0)
+            # Continue while t < max_step and the last computed coef is below threshold.
+            not_done = (t < self.max_step) & (~jnp.allclose(coefs[t - 1], 1.0, rtol=1e-4, atol=1e-4))
+            return not_done
 
         def body_fun(carry):
             t, coefs, particles_arr, log_weights_arr, key, step_size_arr, acc_rate_arr = carry
@@ -239,12 +245,12 @@ class GeometricSMC():
             state = (prev_particles, prev_log_weights, step_size, acc_rate)
             
             # update the next coefficient
-            # If t equals max_steps-1, force the new coefficient to be 1.0.
+            # If t equals max_step-1, force the new coefficient to be 1.0.
             key, key_ = jr.split(key)
             new_coef = jax.lax.cond(
-                t == max_steps - 1,
+                t == self.max_step - 1,
                 lambda _: 1.0,
-                lambda _: self.update_coef(t, coefs, state, key_, 0.6),
+                lambda _: self.update_coef(t, coefs, state, ess_normalized_target=self.ess_normalized_target),
                 operand=None
             )
             coefs = coefs.at[t].set(new_coef)
@@ -271,7 +277,7 @@ class GeometricSMC():
 
 
 
-    def update_coef(self, t, coefs, state, key, ess_normalized_target, tol = 1e-5):
+    def update_coef(self, t, coefs, state, ess_normalized_target, tol = 1e-5):
         '''use target_ess_normalized to find the optimal coefficient by bissection
         If ESS_normalized(tmax*log_weights) >= ess_normalized_target, return tmax. '''
         particles, *_ = state
@@ -295,12 +301,14 @@ class GeometricSMC():
             coef_min = jax.lax.cond(ess_new > ess_normalized_target, lambda _: coef, lambda _: coef_min, None)
             return coef_max, coef_min
 
-        result = jax.lax.cond(ess_tmax >= ess_normalized_target, lambda _: (coef_max, coef_min),\
-                               lambda _: jax.lax.while_loop(cond_fun, body_fun, (coef_max, coef_min)), None)
-        return result[0]
+        result_coef = jax.lax.cond(
+            ess_tmax >= ess_normalized_target,
+            lambda _: coef_max,  # 1.0
+            lambda _: jax.lax.while_loop(cond_fun, body_fun, (coef_max, coef_min))[0],
+            None
+        )
 
-
-
+        return jnp.clip(result_coef, 0.0, 1.0)
 
 
 

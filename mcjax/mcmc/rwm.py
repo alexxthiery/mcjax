@@ -6,7 +6,7 @@ from mcjax.proba.density import LogDensity
 from .markov import MarkovKernel
 
 from dataclasses import dataclass
-from flax import struct
+from flax import struct, serialization
 
 # ==================================
 # Random Walk Metropolis-Hastings
@@ -70,6 +70,9 @@ class Rwm(MarkovKernel):
         else:
             raise ValueError("Invalid covariance matrix")
         
+        # Check if the covariance matrix is effectively the Identity matrix
+        self._is_identity = jnp.array_equal(self.cov, jnp.eye(self.dim))
+        
     def init_state(
             self,
             x_init: jnp.ndarray,     # initial point
@@ -87,15 +90,23 @@ class Rwm(MarkovKernel):
         step_size = jnp.array(step_size, dtype=jnp.float32)         
         # unpack the state and key
         x = state.x
-        logtarget_current = state.logdensity
-        empirical_var = jnp.var(x, axis=0)    
+        logtarget_current = state.logdensity   
         
         # create a proposal
         key, key_ = jr.split(key)
-        x_prop = x + jr.normal(key_, (x.shape)) * step_size * jnp.sqrt(empirical_var)
-        # x_prop = x + jr.normal(key_, (x.shape)) * step_size
-        logtarget_proposal = self.logtarget.batch(x_prop)
+
+        # define proposal based on isotropic or anisotropic noise
+        def isotropic_proposal():
+            return x + jr.normal(key_, x.shape) * step_size
+        def anisotropic_proposal():
+            L = step_size * jnp.linalg.cholesky(self.cov)
+            noise_vecs = jr.normal(key_, x.shape)
+            noise = jax.vmap(lambda z: jnp.dot(L, z))(noise_vecs)
+            return x + noise
+        x_prop = jax.lax.cond(self._is_identity, isotropic_proposal, anisotropic_proposal)
         
+        logtarget_proposal = self.logtarget.batch(x_prop)
+
         # accept or reject for a batch of samples
         log_ratio = logtarget_proposal - logtarget_current
         accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
@@ -109,8 +120,9 @@ class Rwm(MarkovKernel):
         is_accept = u < accept_MH
         is_accept = is_accept[:, None]
         x_new = jnp.where(is_accept, x_prop, x)
-        
+
         logdensity_new = self.logtarget.batch(x_new)
+
         # create the new state
         state_new = RwmState(x=x_new, logdensity=logdensity_new)
         
@@ -123,14 +135,75 @@ class Rwm(MarkovKernel):
                         step_size=step_size,
                         acc_rate=acc_rate)
         return state_new, statistics
-    
+
+    def step_single(self, args):
+        """
+        Perform a single step for one sample
+        """
+        state, key, step_size = args   
+        step_size = jnp.array(step_size, dtype=jnp.float32)         
+        # unpack the state and key
+        x = state.x
+        logtarget_current = state.logdensity
+        
+        # create a proposal
+        key, key_ = jr.split(key)
+        if self._is_identity:
+            # Standard RWMH (with Isotropic noise)
+            x_prop = x + jr.normal(key_, (self.dim,)) * step_size
+        else:
+            # Preconditioned RWMH (Anisotropic noise from full cov)
+
+            L = step_size * jnp.linalg.cholesky(self.cov)
+            
+            noise_vec = jr.normal(key_, (self.dim,))
+            
+            noise = jnp.dot(L, noise_vec)
+            x_prop = x + noise
+        
+        logtarget_proposal = self.logtarget(x_prop)
+
+        # accept or reject
+        log_ratio = logtarget_proposal - logtarget_current
+        accept_MH = jnp.exp(jnp.minimum(0., log_ratio))
+
+        # square jump distance statistics
+        sq_jump = jnp.sum((x_prop - x)**2)
+        
+        # metropolis-hastings acceptance
+        key, key_ = jr.split(key)
+        u = jr.uniform(key_, shape=()) 
+        is_accept = u < accept_MH
+        x_new = jax.lax.cond(
+                    is_accept,
+                    lambda: x_prop,
+                    lambda: x)
+        
+        logdensity_new = jax.lax.cond(
+                            is_accept,
+                            lambda: logtarget_proposal,
+                            lambda: logtarget_current)
+        
+        # create the new state
+        state_new = RwmState(x=x_new, logdensity=logdensity_new)
+        
+        acc_rate = is_accept.astype(jnp.float32)
+        # store the statistics
+        statistics = RwmStats(
+                        sq_jump=sq_jump,
+                        is_accept=is_accept.astype(jnp.float32),
+                        accept_MH=accept_MH,
+                        step_size=step_size,
+                        acc_rate=acc_rate)
+        return state_new, statistics
+
     def adaptive_step(self, args):
         '''
         Take a step with adaptive step size: reiterate until the acceptance rate is within [0.2,0.5]
         '''
         state, key, _, max_iter = args
         key, key_ = jr.split(key)
-        args = (state, key_, self.step_size,0)
+        args = (state, key_, self.step_size, _)
         state, stats = self.step(args)
 
         def cond_fun(carry):
@@ -142,7 +215,7 @@ class Rwm(MarkovKernel):
             state, iter, key, stats = carry
             step_size = stats.step_size
             key, key_ = jr.split(key)
-            args = (state, key_, step_size,0)
+            args = (state, key_, step_size, _)
             state_new, stats_new = self.step(args)
             acc_rate = stats_new.acc_rate
             eta = 0.5; acc_target= 0.234
@@ -163,9 +236,9 @@ class Rwm(MarkovKernel):
             stats_traj: RwmStats,
             ) -> Dict:
         """ Summarize the statistics of the RWM trajectory """
-        acceptance_rate = jnp.mean(stats_traj['accept_MH'])
-        n_accepted = jnp.sum(stats_traj['is_accept'])
-        sq_jump = jnp.mean(stats_traj['sq_jump'])
+        acceptance_rate = jnp.mean(stats_traj.accept_MH)
+        n_accepted = jnp.sum(stats_traj.is_accept)
+        sq_jump = jnp.mean(stats_traj.sq_jump)
         stats_summary = {
             'acceptance_rate': acceptance_rate,
             'n_accepted': n_accepted,

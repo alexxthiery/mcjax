@@ -134,3 +134,6 @@ class Student(LogDensity):
         # samples some student-t random variables
         x = self.mu[None, :] + jnp.sqrt(self.deg/chi2)[:, None] * zs @ self.chol.T
         return x
+    
+    def log_Z(self):
+        return 0.0

@@ -45,8 +45,30 @@ class Mala(MarkovKernel):
         self.logtarget = logtarget
         self._dim = logtarget.dim
         self.step_size = step_size
+        # check mass_inv: mass_inv is either None, a vector (diag) or a full matrix (precision = M^{-1})
+        assert mass_inv is None or (mass_inv.ndim == 1 and mass_inv.shape[0] == self._dim) \
+            or (mass_inv.ndim == 2 and mass_inv.shape == (self._dim, self._dim)), "Invalid mass_inv shape"
         self.mass_inv = mass_inv
-         
+        
+    def _build_precond(self, step_size):
+        if self.mass_inv is None: # Identity mass matrix
+            Minv_mat = jnp.eye(self._dim)
+            M_mat = jnp.eye(self._dim)
+        else:
+            if self.mass_inv.ndim == 1:
+                # self.mass_inv is a vector of diagonal precision entries
+                Minv_mat = jnp.diag(self.mass_inv)          # precision matrix
+                M_mat = jnp.diag(1.0 / self.mass_inv)       # mass matrix
+            else:
+                # full precision matrix provided
+                Minv_mat = self.mass_inv                    # precision matrix
+                M_mat = jnp.linalg.inv(Minv_mat)            # mass matrix
+
+        # proposal covariance Sigma = 2 * step_size * Minv_mat
+        Sigma = 2.0 * step_size * Minv_mat
+        # cholesky for sampling: L @ z ~ N(0, Sigma)
+        L = jnp.linalg.cholesky(Sigma + 1e-8 * jnp.eye(self._dim))
+        return Minv_mat, M_mat, Sigma, L
         
 
     def init_state(
@@ -64,35 +86,48 @@ class Mala(MarkovKernel):
         """
         A single step of MALA sampling
         """
-        state, key, step_size, _ = args 
+        state, key, step_size,_ = args 
         step_size = jnp.array(step_size, dtype=jnp.float32)
         # unpack the state and density function
         x = state.x # x: (num_particles, (dim))
         logtarget_current = state.logdensity
 
+        # Setup Mass Matrix and Preconditioning Components
+        Minv_mat, M_mat, Sigma, L = self._build_precond(step_size)
+        
+        
         # create a proposal
         key, key_ = jr.split(key)
 
-        if self.mass_inv is None:
-            empirical_var = jnp.var(x, axis=0)
-            M_inv = 1.0 / (empirical_var + 1e-8)
-        else:
-            M_inv = self.mass_inv
-        sqrt_M_inv = jnp.sqrt(M_inv)
+        grads = self.logtarget.grad_batch(x)          
+        drift = step_size * jax.vmap(lambda g: Minv_mat @ g)(grads)
 
-        # \log(f(x)) \propto -V(x) 
-        # x_prop = x + step_size * M_inv * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size) * sqrt_M_inv
-        x_prop = x + step_size * self.logtarget.grad_batch(x) + jr.normal(key_, x.shape) * jnp.sqrt(2 * step_size)
+        z = jr.normal(key_, shape=x.shape)
+        noise = jax.vmap(lambda z_i: L @ z_i)(z)
 
+        x_prop = x + drift + noise
         logtarget_proposal = self.logtarget.batch(x_prop)
+
+        # Acceptance Ratio Calculation
+        mu_curr = x + step_size * jax.vmap(lambda g: Minv_mat @ g)(grads)
+        grads_prop = self.logtarget.grad_batch(x_prop)
+        mu_prop = x_prop + step_size * jax.vmap(lambda g: Minv_mat @ g)(grads_prop)
+
+        v1 = x - mu_prop              
+        v2 = x_prop - mu_curr
+
+        quad_fn = lambda v: jnp.einsum('i,ij,j->', v, M_mat, v)
+        dist_sq_1 = jax.vmap(quad_fn)(v1)
+        dist_sq_2 = jax.vmap(quad_fn)(v2)
+
+        log_q_ratio = (1.0 / (4.0 * step_size)) * (dist_sq_2 - dist_sq_1)
+
         
         # accept or reject
         key, key_ = jr.split(key)
         u = jr.uniform(key_, shape=(x.shape[0],)) 
         log_f_ratio = logtarget_proposal - logtarget_current
-        log_q_ratio = (jnp.linalg.norm(x_prop - x - step_size*self.logtarget.grad_batch(x), axis=1)**2 - \
-                       jnp.linalg.norm(x - x_prop - step_size*self.logtarget.grad_batch(x_prop),axis=1)**2)\
-                        /(4*step_size)
+
 
         accept_MH = jnp.exp(jnp.minimum(0., log_f_ratio+log_q_ratio))
         is_accept = u < accept_MH
@@ -101,8 +136,8 @@ class Mala(MarkovKernel):
                                 logtarget_proposal,
                                 logtarget_current)
         
-        is_accept = is_accept[:, None]
-        x_new = jnp.where(is_accept, x_prop, x)
+        is_accept_col = is_accept[:, None]
+        x_new = jnp.where(is_accept_col, x_prop, x)
 
         
         # create the new state
@@ -114,7 +149,7 @@ class Mala(MarkovKernel):
 
         # store the statistics
         statistics = MalaStats(
-                        is_accept=is_accept,
+                        is_accept=is_accept_col,
                         accept_MH=accept_MH,
                         step_size = step_size,
                         acc_rate=acc_rate)
@@ -122,13 +157,85 @@ class Mala(MarkovKernel):
 
         return state_new, statistics
     
+    def step_single(self, args):
+        """
+        Perform a single step for one sample
+        """
+        state, key, step_size = args   
+        step_size = jnp.array(step_size, dtype=jnp.float32)       
+        # unpack the state and density function
+        x = state.x # x: (num_particles, (dim))
+        logtarget_current = state.logdensity
+
+        # Setup Mass Matrix and Preconditioning Components
+        Minv_mat, M_mat, Sigma, L = self._build_precond(step_size)
+
+
+        # create a proposal
+        key, key_ = jr.split(key)
+        grad = self.logtarget.grad(x)
+        drift = step_size * (Minv_mat @ grad)
+
+        z = jr.normal(key_, shape=x.shape)
+        noise = L @ z
+
+        x_prop = x + drift + noise
+        logtarget_proposal = self.logtarget.logdensity(x_prop)
+
+        # Acceptance Ratio Calculation
+        mu_curr = x + step_size * (Minv_mat @ grad)
+        grad_prop = self.logtarget.grad(x_prop)
+        mu_prop = x_prop + step_size * (Minv_mat @ grad_prop)
+
+        v1 = x - mu_prop
+        v2 = x_prop - mu_curr
+
+        dist_sq_1 = jnp.einsum('i,ij,j->', v1, M_mat, v1)
+        dist_sq_2 = jnp.einsum('i,ij,j->', v2, M_mat, v2)
+
+        log_q_ratio = (0.25 / step_size) * (dist_sq_2 - dist_sq_1)
+
+        
+        # accept or reject
+        key, key_ = jr.split(key)
+        u = jr.uniform(key_, shape=())
+        log_f_ratio = logtarget_proposal - logtarget_current
+
+        # jax.debug.print("log_f_ratio: {lf}, log_q_ratio: {lq}", lf=log_f_ratio, lq=log_q_ratio)
+
+        accept_MH = jnp.exp(jnp.minimum(0., log_f_ratio+log_q_ratio))
+
+        is_accept = u < accept_MH
+        logdensity_new = jnp.where(
+                                is_accept,
+                                logtarget_proposal,
+                                logtarget_current)
+        
+        x_new = jnp.where(is_accept, x_prop, x)
+
+        
+        # create the new state
+        state_new = MalaState(x=x_new, logdensity=logdensity_new)
+        acc_rate = is_accept.astype(jnp.float32)
+
+        # store the statistics
+        statistics = MalaStats(
+                        is_accept=is_accept,
+                        accept_MH=accept_MH,
+                        step_size = step_size,
+                        acc_rate=acc_rate)
+    
+
+        return state_new, statistics 
+
+
     def adaptive_step(self, args):
         '''
         Take a step with adaptive step size: reiterate until the acceptance rate is within [0.2,0.5]
         '''
         state, key, _, max_iter = args
         key, key_ = jr.split(key)
-        args = (state, key_, self.step_size,0)
+        args = (state, key_, self.step_size,_)
         state, stats = self.step(args)
 
         def cond_fun(carry):
@@ -140,7 +247,7 @@ class Mala(MarkovKernel):
             state, iter, key, stats = carry
             step_size = stats.step_size
             key, key_ = jr.split(key)
-            args = (state, key_, step_size,0)
+            args = (state, key_, step_size,_)
             state_new, stats_new = self.step(args)
             acc_rate = stats_new.acc_rate
             eta = 0.5; acc_target= 0.574
@@ -156,17 +263,15 @@ class Mala(MarkovKernel):
         return state, stats
 
 
-
-
     def summarize_stats_traj(
             self,
             stats_traj: MalaStats,
             ) -> Dict:
         """ Summarize the statistics of the RWM trajectory """
-        acceptance_rate = jnp.mean(stats_traj['accept_MH'])
-        n_accepted = jnp.sum(stats_traj['is_accept'])
+        acceptance_rate = jnp.mean(stats_traj.accept_MH)
+        n_accepted = jnp.sum(stats_traj.is_accept)
         stats_summary = {
             'acceptance_rate': acceptance_rate,
-            'n_accepted': n_accepted
+            'n_accepted': n_accepted,
         }
         return stats_summary
