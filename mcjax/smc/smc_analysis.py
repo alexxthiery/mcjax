@@ -56,9 +56,9 @@ def mult_run(GSMC:GeometricSMC, num_particles, key, mc_method, num_run, if_adapt
 
 
 def get_log_dist(name, param):
-    dim, m, delta = param
+    dim, m, delta, sigma_x = param
     if name == 'funnel':
-        return NealFunnel(dim=dim)
+        return NealFunnel(dim=dim, sigma_x=sigma_x)
     elif name == 'gaussian': # Default reference: standard isotropic Gaussian
         mu_0 = jnp.zeros(dim)
         sigma_0 = 1.
@@ -70,15 +70,17 @@ def get_log_dist(name, param):
         deg = 3.
         return Student(mu=mu, cov=cov, deg=deg)
     elif name == 'banana2d':
+        print(f"dim={dim}")
         assert dim == 2, "Banana2D is only defined for 2D"
         return Banana2D()
     elif name == 'gmmfixed':
+        # 9-component Gaussian mixture model in 2D
         assert dim == 2, "GMMFixed is only defined for 2D"
         return GMMFixed()
     elif name == 'doublewell':
         return DoubleWell(dim=dim, m=m, delta=delta)
     elif name == 'mixedgaussian':
-        # high-dimensional mixture of 2 Gaussians  centered at (1,...,1) and (-1,...,-1) respectively
+        # high-dimensional mixture of 2 Gaussians centered at (1,...,1) and (-1,...,-1) respectively
         mu1 = jnp.ones(dim)
         mu2 = -jnp.ones(dim)
         mu = jnp.stack([mu1, mu2], axis=0)
@@ -96,7 +98,6 @@ def parse_args():
     parser.add_argument("--num_steps", type=int, default=10)
     parser.add_argument("--num_runs", type=int, default=200)
     parser.add_argument("--num_particles_arr", nargs='+', type=int, default=[100, 1000, 5000, 10000])
-    parser.add_argument("--num_particles", type=int, default=1000)
     parser.add_argument("--step_size", type=float, default=1.0)
     parser.add_argument("--num_substeps", type=int, default=10)
     parser.add_argument("--max_step", type=int, default=100)
@@ -110,6 +111,7 @@ def parse_args():
     parser.add_argument("--alpha", type=float, default=0.2)
     parser.add_argument("--m", type=int, default=5)
     parser.add_argument("--delta", type=float, default=4.0)
+    parser.add_argument("--sigma_x", type=float, default=3.0)
 
     return parser.parse_args()
 
@@ -117,7 +119,6 @@ def parse_args():
 def smc_test1(): 
     args = parse_args()
     num_particles_arr = args.num_particles_arr
-    num_particles = args.num_particles
     num_run = args.num_runs
     step_size = args.step_size
     num_substeps = args.num_substeps
@@ -130,9 +131,12 @@ def smc_test1():
     method = args.method
     dim = args.dim
 
-    param = (dim, args.m, args.delta)
+    param = (dim, args.m, args.delta, args.sigma_x)
     log_gamma_0 = get_log_dist(reference, param)
     log_gamma_T = get_log_dist(target, param)
+
+    # print information of this test
+    print(f"SMC Test 1: from {reference} to {target}, dim={dim}, method={method}, adaptive={if_adaptive}")
 
     # create a folder named 'pics' to save the plots
     if not os.path.exists('pics'):
@@ -182,7 +186,6 @@ def smc_test1():
 def smc_test2(): 
     args = parse_args()
     num_particles_arr = args.num_particles_arr
-    num_particles = args.num_particles
     num_run = args.num_runs
     step_size = args.step_size
     num_substeps = args.num_substeps
@@ -193,9 +196,12 @@ def smc_test2():
     target = args.target
     dim = args.dim
 
-    param = (dim, args.m, args.delta)
+    param = (dim, args.m, args.delta, args.sigma_x)
     log_gamma_0 = get_log_dist(reference, param)
     log_gamma_T = get_log_dist(target, param)
+
+    # print information of this test
+    print(f"SMC Test 2: from {reference} to {target}, dim={dim}")
 
     # create a folder named 'pics' to save the plots
     if not os.path.exists('pics'):
@@ -263,5 +269,5 @@ def smc_test2():
     plt.close()
 
 if __name__ == "__main__":
-    # smc_test1()
+    smc_test1()
     smc_test2()
