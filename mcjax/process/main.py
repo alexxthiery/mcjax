@@ -3,6 +3,9 @@
 import argparse
 from ast import For
 import re
+
+
+from click import group
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -53,7 +56,7 @@ def parse_args():
     parser.add_argument("--if_logZ",    type=str2bool, default=True)
     parser.add_argument("--seed",       type=int, default=42)
     parser.add_argument("--if_train",   type=str2bool, default=True)
-    parser.add_argument("--save_model", type=str2bool, default=True)
+    parser.add_argument("--save_model", type=str2bool, default=False)
     parser.add_argument("--model_path", type=str, default="model_params.pkl")
     parser.add_argument("--results_dir", type=str, default="results")
     parser.add_argument("--sigma_min",  type=float, default=0.5)
@@ -79,11 +82,19 @@ def parse_args():
     parser.add_argument("--do_grid_search", type=str2bool, default=False)
     parser.add_argument("--dw_draw_marginals", type=str2bool, default=False)
     parser.add_argument("--dw_draw_well_hist", type=str2bool, default=False)
+
+    parser.add_argument("--m",type=int, default=5)
+    parser.add_argument("--delta",type=float, default=4.0)
+    parser.add_argument("--dim",type=int, default=5)
+    parser.add_argument("--sigma_x",type=float, default=3.0)
+    parser.add_argument("--offset", nargs='+', type=float, default=[0.0, 0.0, 0.0, 0.0, 0.0])
+    parser.add_argument("--diaggauss_var", nargs='+', type=float)
+
     return parser.parse_args()
 
-def append_metrics(algo, target, loss_type, delta_logZ, wass, sink, target_folder_path):
+def append_metrics(algo, target, loss_type, delta_logZ, wass, sink, target_folder_path, dim):
     os.makedirs(target_folder_path, exist_ok=True)
-    fname = os.path.join(target_folder_path, f"metrics_{algo}_{target}.json")
+    fname = os.path.join(target_folder_path, f"metrics_{algo}_{target}_DIM={dim}.json")
 
     if os.path.exists(fname):
         try:
@@ -167,8 +178,10 @@ def summarize_results(target_folder_path, excel_path="metric_results.xlsx"):
     
     # Search recursively for all .json files
     search_path = os.path.join(target_folder_path, "**", "*.json")
+    # exclude config.json
+    json_files = [f for f in glob.glob(search_path, recursive=True) if not f.endswith("config.json")]
     
-    for json_file in glob.glob(search_path, recursive=True):
+    for json_file in json_files:
         print(f"Processing {json_file}...")
 
         target_name = os.path.basename(os.path.dirname(json_file)) 
@@ -185,8 +198,9 @@ def summarize_results(target_folder_path, excel_path="metric_results.xlsx"):
             try:
                 data_all_losses = json.load(f)
             except json.JSONDecodeError:
-                print(f"  Skipping corrupted file: {json_file}")
+                print(f"Skipping corrupted file: {json_file}")
                 continue
+
 
         for loss_type, metrics in data_all_losses.items():
             
@@ -316,9 +330,17 @@ def grid_summarize(target_folder_path, excel_path="metric_results_grid.xlsx"):
             ranks = group[metric_cols].rank()  # rank within this target
             return ranks.mean(axis=1)          
 
+
         meanrank_series = pivot_reset.groupby("Target", group_keys=False).apply(
             compute_meanrank_per_target
         )
+
+        # Drop the group index level so its index matches pivot_reset
+        # meanrank_series.index = meanrank_series.index.droplevel(0)
+        # meanrank_series = meanrank_series.reindex(pivot_reset.index)
+
+
+        print("meanrank_series:", meanrank_series)
 
         pivot_reset["MeanRank"] = meanrank_series
 
@@ -365,6 +387,14 @@ def main():
     # add folder_path to args
     args.folder_path = folder_path
 
+    # save parameters in config.json
+    args_dict = vars(args)
+    save_path = os.path.join(folder_path, "config.json")
+    with open(save_path, "w") as f:
+        json.dump(args_dict, f, indent=4)
+
+
+
     # create models dir if not exist
     if args.save_model:
         os.makedirs("models", exist_ok=True)
@@ -384,7 +414,7 @@ def main():
     alg = AlgoClass(config=args)
 
     # create target_dist results dir if not exist
-    target_folder_path = f"{args.folder_path}/{args.target_dist}"
+    target_folder_path = f"{args.folder_path}/{args.target_dist}_DIM={alg.data_dim}"
     os.makedirs(target_folder_path, exist_ok=True)
     
     if args.algo == "idem" and args.backdiffusion_true_score and args.target_dist == "1d":
@@ -421,7 +451,7 @@ def main():
         plt.ylabel("loss")
         plt.legend()
         plt.title(f"{args.algo} training loss K={args.K} steps={args.num_steps} loss type={args.loss_type}")
-        plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_{args.loss_type}_{args.K}_{args.lr}_loss.png")
+        plt.savefig(f"{args.folder_path}/{args.target_dist}_DIM={alg.data_dim}/{args.algo}_{args.loss_type}_{args.K}_{args.lr}_loss.png")
         plt.close()
 
         if args.algo == "idem" and args.target_dist == "1d":
@@ -483,7 +513,7 @@ def main():
             l2, lbl2 = ax2.get_legend_handles_labels()
             ax1.legend(lines + l2, labels + lbl2, loc='upper left')
             plt.title(f"{args.algo} logZ statistics K={args.K} steps={args.num_steps} loss type={args.loss_type}")
-            plt.savefig(f"{args.folder_path}/{args.target_dist}/{args.algo}_{args.loss_type}_{args.K}_{args.lr}_logZ.png")
+            plt.savefig(f"{args.folder_path}/{args.target_dist}_DIM={alg.data_dim}/{args.algo}_{args.loss_type}_{args.K}_{args.lr}_logZ.png")
             plt.close()
 
             # output final logZ estimate
@@ -543,17 +573,15 @@ def main():
                 wass, sink, target_folder_path, args.K, args.lr
             )
         else:
-            append_metrics(args.algo, args.target_dist, args.loss_type, delta_logZ if args.if_logZ else float('nan'), wass, sink, target_folder_path)
+            append_metrics(args.algo, args.target_dist, args.loss_type, delta_logZ if args.if_logZ else float('nan'), \
+                           wass, sink, target_folder_path, alg.data_dim)
 
         if args.dw_draw_marginals and args.target_dist == "doublewell":
             print("Drawing DoubleWell marginals...")
-            # doublewell = DoubleWell()
-            print("delta:", alg.target_dist.delta, "m:", alg.target_dist.m)
             alg.target_dist.plot_doublewell_marginals(args.folder_path, args.algo, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
 
         if args.dw_draw_well_hist and args.target_dist == "doublewell":
             print("Drawing DoubleWell well histogram...")
-            # doublewell = DoubleWell()
             alg.target_dist.plot_doublewell_well_hist(args.folder_path, args.algo, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
 if __name__ == "__main__":
     print(f"Available devices: {jax.devices()}")

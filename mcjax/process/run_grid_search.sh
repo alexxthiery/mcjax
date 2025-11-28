@@ -3,16 +3,16 @@ set -e
 
 # Timestamp for results folder
 timestamp=$(date +%Y%m%d_%H%M%S)
-# timestamp='20251113_171725'
+# timestamp='20251119_121021'
 
 save_model=false
 
 # Parameter grids
-algos=('mcd' 'pis' 'dds')
-targets=('1d' 'funnel')
-loss_types=('kl' 'lv')
+algos=('mcd' 'dds')
+targets=('1d' 'doublewell')
+loss_types=('lv')
 Ks=(200)
-lrs=(0.00001 0.0001 0.001)
+lrs=(0.0001)
 seeds=(0)
 
 # Main grid search loop
@@ -30,7 +30,7 @@ for algo in "${algos[@]}"; do
               --sigma 1.0 \
               --lr "$lr" \
               --batch_size 256 \
-              --num_steps 5000 \
+              --num_steps 3000 \
               --to_visualize false \
               --get_metrics true \
               --algo "$algo" \

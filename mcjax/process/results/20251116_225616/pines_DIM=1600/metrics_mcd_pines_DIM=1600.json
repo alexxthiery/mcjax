@@ -1,0 +1,36 @@
+{
+    "kl": {
+        "delta_logZ": [
+            408.72686767578125,
+            409.2672119140625,
+            407.416259765625
+        ],
+        "wasserstein": [
+            NaN,
+            NaN,
+            NaN
+        ],
+        "sinkhorn": [
+            NaN,
+            NaN,
+            NaN
+        ]
+    },
+    "lv": {
+        "delta_logZ": [
+            146.0342254638672,
+            193.5779571533203,
+            377.5119934082031
+        ],
+        "wasserstein": [
+            NaN,
+            NaN,
+            NaN
+        ],
+        "sinkhorn": [
+            NaN,
+            NaN,
+            NaN
+        ]
+    }
+}

@@ -1,0 +1,13 @@
+{
+    "kl": {
+        "delta_logZ": [
+            NaN
+        ],
+        "wasserstein": [
+            0.0
+        ],
+        "sinkhorn": [
+            NaN
+        ]
+    }
+}

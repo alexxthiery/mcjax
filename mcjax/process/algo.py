@@ -17,7 +17,7 @@ from models import MLPModel, ResBlockModel
 from ou import OU
 from mcjax.proba.neal_funnel import NealFunnel
 from mcjax.proba.banana2d import Banana2D
-from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40, GMMFixed
+from mcjax.proba.gaussian import IsotropicGauss, MixedIsotropicGauss, GMM40, GMMFixed, DiagGauss
 from mcjax.proba.doublewell import DoubleWell
 from mcjax.proba.log_gauss_pines import LogGaussPines
 from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss
@@ -56,14 +56,12 @@ class BaseAlgorithm(ABC):
             self.target_dist = GMM40(n_mixes=2, loc_scaling=5.0, weights=jnp.array([0.6, 0.4])) # test with 2 components for faster debugging
             self.data_dim = 2
         elif config.target_dist == 'gmmfixed':
+            assert config.dim == 2, "GMMFixed only implemented for 2D"
             self.target_dist = GMMFixed()
             self.data_dim = 2
         elif config.target_dist == 'doublewell':
-            self.target_dist = DoubleWell(dim=5, m=5, delta=4.0)
-            self.data_dim = 5
-        elif config.target_dist == 'doublewell2': # higher dimension
-            self.target_dist = DoubleWell(dim=50, m=5, delta=2.0)
-            self.data_dim = 50
+            self.target_dist = DoubleWell(dim=self.cfg.dim, m=self.cfg.m, delta=self.cfg.delta, offset=jnp.array(self.cfg.offset))
+            self.data_dim = self.cfg.dim
         elif config.target_dist == '1d':
             mu = jnp.array([[-1.],[1.]])
             dist_sigma = jnp.array([0.5,0.6])
@@ -74,8 +72,8 @@ class BaseAlgorithm(ABC):
             )
             self.data_dim = 1
         elif config.target_dist == 'funnel':
-            self.target_dist = NealFunnel(sigma_x=3.0, dim=2)
-            self.data_dim = 2
+            self.target_dist = NealFunnel(sigma_x=3.0, dim=config.dim)
+            self.data_dim = config.dim
 
         elif config.target_dist == 'banana2d':
             self.target_dist = Banana2D(noise_std=0.1)
@@ -88,6 +86,13 @@ class BaseAlgorithm(ABC):
         elif config.target_dist == 'sonar':
             self.target_dist = BayesianLogisticTarget(prior_var=1.0)
             self.data_dim = self.target_dist.d  # 61 features + bias = 62
+        
+        elif config.target_dist == 'diaggauss':
+            # assert config.diaggauss_var is valid
+            self.target_dist = DiagGauss(
+                mu=jnp.zeros(config.dim), log_var=jnp.log(jnp.array(config.diaggauss_var)) 
+            )
+            self.data_dim = config.dim
 
         else:
             raise ValueError(f"Unknown target_dist: {config.target_dist}")
@@ -265,7 +270,7 @@ class BaseAlgorithm(ABC):
                 blit=True
             )
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f'{self.cfg.folder_path}/{self.cfg.target_dist}/density_evolution_{self.cfg.algo}_{self.cfg.loss_type}.mp4'
+            fname = f'{self.cfg.folder_path}/{self.cfg.target_dist}_DIM={self.data_dim}/density_evolution_{self.cfg.algo}_{self.cfg.loss_type}.mp4'
             ani.save(fname, writer=writer)
             plt.close()
 
@@ -344,7 +349,7 @@ class BaseAlgorithm(ABC):
             )
 
             writer = FFMpegWriter(fps=30, metadata=dict(artist='BaseAlgorithm'), bitrate=1800)
-            fname = f"{self.cfg.folder_path}/{self.cfg.target_dist}/sample_movement_{self.cfg.algo}_{self.cfg.loss_type}.mp4"
+            fname = f"{self.cfg.folder_path}/{self.cfg.target_dist}_DIM={self.data_dim}/sample_movement_{self.cfg.algo}_{self.cfg.loss_type}.mp4"
             ani.save(fname, writer=writer)
             plt.close(fig)
 
