@@ -3,15 +3,15 @@ set -e
 
 # Timestamp for results folder
 timestamp=$(date +%Y%m%d_%H%M%S)
-# timestamp='20251119_121021'
+# timestamp='20251201_163315'
 
 save_model=false
 
 # Parameter grids
 algos=('mcd' 'dds')
-targets=('1d' 'doublewell')
-loss_types=('lv')
-Ks=(200)
+targets=('doublewell')
+loss_types=('lv' 'kl')
+Ks=(100 200 300 400 500 600 700 800)
 lrs=(0.0001)
 seeds=(0)
 

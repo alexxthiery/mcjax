@@ -22,7 +22,6 @@ from mcjax.proba.doublewell import DoubleWell
 from mcjax.proba.log_gauss_pines import LogGaussPines
 from losses import DDSLoss, IDEMLoss, PISLoss, CMCDLoss
 from trainer import Trainer, InnerTrainer
-from mcjax.proba.sonar import BayesianLogisticTarget
 
 class BaseAlgorithm(ABC):
     """
@@ -53,7 +52,7 @@ class BaseAlgorithm(ABC):
 
         # Build the target distribution
         if config.target_dist == 'gmm40':
-            self.target_dist = GMM40(n_mixes=2, loc_scaling=5.0, weights=jnp.array([0.6, 0.4])) # test with 2 components for faster debugging
+            self.target_dist = GMM40() 
             self.data_dim = 2
         elif config.target_dist == 'gmmfixed':
             assert config.dim == 2, "GMMFixed only implemented for 2D"
@@ -82,10 +81,6 @@ class BaseAlgorithm(ABC):
         elif config.target_dist == 'pines':
             self.target_dist = LogGaussPines(grid_dim=40, use_whitened=False)
             self.data_dim = 40 * 40  # 1600 dimensions
-        
-        elif config.target_dist == 'sonar':
-            self.target_dist = BayesianLogisticTarget(prior_var=1.0)
-            self.data_dim = self.target_dist.d  # 61 features + bias = 62
         
         elif config.target_dist == 'diaggauss':
             # assert config.diaggauss_var is valid
@@ -174,7 +169,6 @@ class BaseAlgorithm(ABC):
     def train(self, rng_key):
         """
         Runs the outer training loop using the generic Trainer.
-        Returns (final_state, final_key, loss_history, logZ_vals, logZ_vars)
         """
         trainer = Trainer(
             algorithm    = self,
@@ -358,13 +352,12 @@ class BaseAlgorithm(ABC):
 
 class DDSAlgorithm(BaseAlgorithm):
     """
-    Implements the DDS sampler (Denoising Diffusion Sampler)
+    Implements the DDS sampler (Denoising Diffusion Sampler).
     """
 
     def __init__(self, config):
         super().__init__(config)
-        # build the network
-        #    choose MLP or ResBlock based on config.model_type
+        # choose between MLP and ResBlock
         if config.network_name == 'mlp':
             self.model = MLPModel(dim=self.data_dim, T=config.K)
         elif config.network_name == 'resblock':
@@ -450,7 +443,7 @@ class DDSAlgorithm(BaseAlgorithm):
     
 class IDEMAlgorithm(BaseAlgorithm):
     """
-    Implements the iDEM (Iterated Denoising Energy Matching).
+    Implements the iDEM (Iterated Denoising Energy Matching). (Not used)
     """
 
     @struct.dataclass
@@ -890,6 +883,10 @@ class IDEMAlgorithm(BaseAlgorithm):
 
 
 class PISAlgorithm(BaseAlgorithm):
+    '''
+    Implements the PIS (Path Integral Sampler).
+    '''
+
     def __init__(self, config):
         super().__init__(config)
         if config.network_name == 'mlp':
@@ -1078,10 +1075,6 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
 
     @partial(jax.jit, static_argnums=(0, 3))
     def estimate_logZ(self, params, key, num_samples: int):
-        """
-        Importance sampling estimator of logZ.
-        logZ ≈ logmeanexp(log_ratio) with log_ratio defined as in eq. (24).
-        """
         K = self.ou.K
         delta_t = 1.0 / K
         sigma2 = self.ou.sigma**2
@@ -1089,7 +1082,7 @@ class ControlledMonteCarloDiffusion(BaseAlgorithm):
 
         key, sub = jr.split(key)
         x0 = self.init_dist.sample(sub, num_samples)
-        log_ratio = -self.init_dist.batch(x0)  # -log π0(x0)
+        log_ratio = -self.init_dist.batch(x0)  
 
         def body(carry, t):
             x, lr, key = carry

@@ -80,7 +80,6 @@ class DDSLoss(BaseLoss):
             else: # self.loss_type == 'lv'
                 s_detached = jax.lax.stop_gradient(s_attached)
 
-                # This 'if' is also static and evaluated at COMPILE time
                 if self.sde_ctrl_noise > 0.0:
                     noise = jr.normal(key_noise, shape=s_detached.shape)
                     s_path = s_detached + self.sde_ctrl_noise * noise
@@ -136,9 +135,8 @@ class IDEMLoss(BaseLoss):
         """
         self.num_samples = num_samples
         self.sigma_fn = sigma_fn  # (geometric) noise schedule
-        # self.buffer = buffer  # a Buffer instance to sample x0 from
         self.target_dist = target_dist
-        self.score_fn = score_fn  # Store score_fn here
+        self.score_fn = score_fn 
         self.total_step = total_step # total number of steps in the process
         self.add_drift = add_drift
         self.sample_t_weight = sample_t_weight
@@ -147,7 +145,6 @@ class IDEMLoss(BaseLoss):
         '''
         Exact score for 1d mixed-isotropic Gaussian mixture at time t.
         '''
-        # jax.debug.print("x_t shape: {}, step shape: {}", x_t.shape, step.shape)
         x_t = jnp.squeeze(x_t)
         step = jnp.squeeze(step)
         # current noise level
@@ -168,22 +165,21 @@ class IDEMLoss(BaseLoss):
             v   = comp_sigmas**2 + int_sigma**2  
             m = mu.flatten()
         
-        diffs = m - x_t        # (n_comp,)
+        diffs = m - x_t      
         norm  = jnp.sqrt(2 * jnp.pi * v)
         exps  = jnp.exp(-0.5 * (diffs**2) / v) / norm
 
         # unnormalized component responsibilities
-        pis = weights * exps              # (n_comp,)
+        pis = weights * exps       
 
         # numerator and denominator for score
         numer = jnp.sum(pis * (diffs / v))
         denom = jnp.sum(pis)
-        # denom = jnp.clip(denom, 1e-10, jnp.inf)  # avoid division by zero
 
         return numer / denom
 
     def get_int_sigma(self, t):
-        # calculate int_sigma = sqrt(∫₀ᵗ σ(s)²) ds for a given t
+        # int_sigma = sqrt(\int_0^t σ(s)^2 ds) for a given t
         sigma_max = self.sigma_fn(1)
         sigma_min = self.sigma_fn(0)
         int_sigma = jnp.sqrt(1/3*t**3*(sigma_max-sigma_min)**2 + sigma_min*(sigma_max-sigma_min)*t**2\
@@ -200,7 +196,7 @@ class IDEMLoss(BaseLoss):
         loss: scalar, the average MSE between S_K(x_t, t) and s_theta(x_t, t).
         """
         # Draw a batch of x0 ∼ buffer
-        x0,key = buffer.sample(key, self.num_samples)    # shape: (B, d, ...)
+        x0,key = buffer.sample(key, self.num_samples)
         key,sub = jr.split(key)
 
         if self.sample_t_weight:
@@ -216,13 +212,13 @@ class IDEMLoss(BaseLoss):
 
         else:
             # Sample t ∼ Uniform(0,1) for all the x0 in the batch
-            step = jr.randint(sub, shape=(self.num_samples,), minval=1, maxval=self.total_step+1).reshape(-1,1)  # shape (B, 1)
+            step = jr.randint(sub, shape=(self.num_samples,), minval=1, maxval=self.total_step+1).reshape(-1,1)
         t = step / self.total_step
 
-        # calculate int_sigma = sqrt(∫₀ᵗ σ(s)²) ds for all t in the batch
+        # int_sigma = sqrt(\int_0^t σ(s)^2 ds) for all t in the batch
         # Here we use the default σ(t) = σ_max*t + σ_min*(1-t)
         int_sigma = self.get_int_sigma(t) 
-        int_sigma = int_sigma.reshape((-1,) + (1,) * (x0.ndim - 1))  # broadcasting to x0's shape
+        int_sigma = int_sigma.reshape((-1,) + (1,) * (x0.ndim - 1)) 
         key, sub = jr.split(key)
         eps = jr.normal(sub, shape=x0.shape)
         if self.add_drift:
@@ -258,33 +254,23 @@ class IDEMLoss(BaseLoss):
 
 
         keys_batch = jr.split(key, self.num_samples) 
-
-
-        # For debugging, use true_score instead of MC estimate
-        mu = self.target_dist.mu
-        comp_sigmas = jnp.exp(self.target_dist.log_var)**0.5
         weights = jnp.exp(self.target_dist.log_w)
-        # S_K_batch_true = jax.vmap(self.true_score, in_axes=(0, 0, None, None, None), out_axes=0)(
-        #     x_t, step, mu, comp_sigmas, weights)
-        # jax.debug.print("S_K_batch shape: {}", S_K_batch.shape)
         S_K_batch = jax.vmap(mc_estimate_single, in_axes=(0, 0, 0), out_axes=0)(
             x_t, t, keys_batch)
         
 
         def score_fn_wrapper(params, step_scalar, x_t_single):
-#            add batch dimension for x_t_single so it matches score_fn’s API
-            x_t_single = x_t_single[None, ...]       # shape (1, d, …)
+            x_t_single = x_t_single[None, ...]
             out = self.score_fn(params, step_scalar, x_t_single)
             return out[0]          
 
-        # Vectorize over (step, x_t)
         s_pred = jax.vmap(score_fn_wrapper, in_axes=(None, 0, 0))(params, step, x_t)
 
 
-        # Compute per-example squared ‖S_K - s_pred‖² and average:
+        # Compute per-example squared ‖S_K - s_pred‖^2 and average:
         sq_err = jnp.sum((S_K_batch - s_pred) ** 2,
                         axis=tuple(range(1, S_K_batch.ndim)))  
-        loss = jnp.mean(sq_err)  # scalar
+        loss = jnp.mean(sq_err) 
 
         
         ############################################################
@@ -332,7 +318,6 @@ class PISLoss(BaseLoss):
 
             running = running + 0.5 * jnp.sum(u_loss**2, axis=-1) * self.delta_t
 
-            # 4. Update Path (using u_path)
             dW = jr.normal(key_dw, x.shape) * jnp.sqrt(self.delta_t)
             x_next = x + u_path * self.delta_t + dW
             
@@ -342,7 +327,6 @@ class PISLoss(BaseLoss):
         times = jnp.arange(self.n_steps, dtype=jnp.float32)
         (xT, running, _), _ = jax.lax.scan(body, (x, running_cost, key), times)
 
-        # terminal cost Ψ = log q_T(x_T) - log p(x_T) under pure Brownian motion 
         var_total = 1.0 + process.T  # Total variance = 1+T (pure Brownian motion)
         d = xT.shape[-1]
         log_qT = -0.5 * d * jnp.log(2 * jnp.pi * var_total) \
@@ -361,17 +345,7 @@ class PISLoss(BaseLoss):
 
 class CMCDLoss(BaseLoss):
     """
-    Discrete-time CMCD loss based on the paper
-    'Transport Meets Variational Inference'. 
-
-    The loss per sample is:
-      L = log π0(x0) - log πT(xK) + sum_{k=0}^{K-1} [ log N(x_{k+1}; mu_fwd_k, var)
-                                                       - log N(x_k; mu_bwd_k, var) ]
-    where
-      mu_fwd_k = x_k + (sigma^2 * grad ln π_{t_k} + factor * u_k) * Δt
-      mu_bwd_k = x_{k+1} + (sigma^2 * grad ln π_{t_{k+1}} - u_{k+1}) * Δt
-    and var = 2 * sigma^2 * Δt.
-
+    Discrete-time CMCD/MCD loss
     """
     def __init__(self, use_control_in_denominator: bool, add_score: bool = False,\
                  loss_type: str = 'kl', sde_ctrl_noise: float = 0.0):
@@ -437,9 +411,7 @@ class CMCDLoss(BaseLoss):
             quad = -0.5 * jnp.sum((x - mu)**2, axis=-1) / variance
             return norm + quad  
 
-        # compute transition log-ratio for each k = 0..K-1
         def per_step(k):
-            # extract arrays for step k
             x_k = states[k]        
             x_kp1 = states[k+1]
             u_k = controls[k]
@@ -464,7 +436,6 @@ class CMCDLoss(BaseLoss):
         ks = jnp.arange(n_steps)
         trans_terms = jax.vmap(per_step)(ks)  
         trans_sum = jnp.sum(trans_terms, axis=0) 
-        # jax.debug.print("trans_terms: {t}", t=trans_terms)
 
         # endpoints
         log_pT = target_dist.batch(xK)    

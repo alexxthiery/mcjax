@@ -1,29 +1,22 @@
 #!/bin/bash
 set -e
 
-timestamp='20251128_142529'
-# timestamp=$(date +%Y%m%d_%H%M%S)
+# timestamp='20251128_142529'
+timestamp=$(date +%Y%m%d_%H%M%S)
 
 #############################
-# Compare the condition_term setting's influence on funnel target
 
-algos=('mcd' 'dds')
-targets=('diaggauss')
+algos=('mcd' 'dds' 'pis')
+targets=('gmm40')
 loss_types=('kl' 'lv')
-dim=100
 seeds=(0 1 2)
-
+dims=(2)
 num_steps=3000
-delta=4.0
-m=5
-offset=(0.0 1.0 -1.0 2.0 -2.0) 
-dims=(5 10 20 50)
 
 for algo in "${algos[@]}"; do
   for target in "${targets[@]}"; do
     for loss_type in "${loss_types[@]}"; do
       for dim in "${dims[@]}"; do
-        diaggauss_var=($(seq 1 "$dim")) 
         for seed in "${seeds[@]}"; do
           echo "Running $algo on $target DIM=$dim, loss_type=$loss_type, seed=$seed"
           python main.py \
@@ -32,6 +25,7 @@ for algo in "${algos[@]}"; do
             --sigma 1.0 \
             --lr 0.0001 \
             --batch_size 256 \
+            --sigma 5.0 \
             --num_steps $num_steps \
             --to_visualize true \
             --get_metrics true \
@@ -47,12 +41,7 @@ for algo in "${algos[@]}"; do
             --samples_for_final_visualization 2000 \
             --loss_type $loss_type \
             --dw_draw_marginals true \
-            --dw_draw_well_hist true \
-            --dim $dim \
-            --delta $delta \
-            --m $m \
-            --offset ${offset[@]} \
-            --diaggauss_var ${diaggauss_var[@]}
+            --dw_draw_well_hist true
         done
       done
     done

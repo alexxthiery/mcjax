@@ -18,7 +18,7 @@ def MMD_squared(x_samples: np.ndarray, y_samples: np.ndarray, kernel='rbf', sigm
     Compute MMD^2 between two numpy arrays of shape (N, d), (M, d).
     Uses an RBF kernel by default with bandwidth sigma.  Returns scalar.
     """
-    # Convert to float64 for SciPy if needed
+    # Convert to float64 for SciPy
     X = np.asarray(x_samples, dtype=np.float64)
     Y = np.asarray(y_samples, dtype=np.float64)
 
@@ -57,7 +57,7 @@ def two_wasserstein(x_samples: np.ndarray, y_samples: np.ndarray) -> float:
     x = np.asarray(x_samples)
     y = np.asarray(y_samples)
 
-    # --- 1D Case (Fast) ---
+    # 1D Case
     if x.ndim == 1 and y.ndim == 1:
         return ot.wasserstein_1d(x, y, p=2)
 
@@ -67,8 +67,7 @@ def two_wasserstein(x_samples: np.ndarray, y_samples: np.ndarray) -> float:
         y = y.reshape(-1, 1)
         
     if x.shape[1] != y.shape[1]:
-        raise ValueError(f"Feature dimensions must match: "
-                         f"{x.shape[1]} != {y.shape[1]}")
+        raise ValueError(f"Feature dimensions must match: "f"{x.shape[1]} != {y.shape[1]}")
 
     n = x.shape[0]
     m = y.shape[0]
@@ -92,7 +91,6 @@ def ELBO(logweights: np.ndarray, logZ: float = 0.0):
     logweights: shape (N,) - log of normalized weights
     logZ: optional log normalization constant
     """
-    # use logsumexp to compute log of sum of exponentials
     return logsumexp(logweights) - np.log(len(logweights)) + logZ
 
 def ESS(logweights: np.ndarray):
@@ -100,7 +98,6 @@ def ESS(logweights: np.ndarray):
     Effective sample size: 1 / sum(w_i^2), where weights normalized to sum=1.
     weights: shape (N,)
     """
-    # use logsumexp to compute log of sum of exponentials
     return 1.0 / np.exp(logsumexp(2 * logweights)) 
 
 def sinkhorn_distance(
@@ -116,6 +113,8 @@ def sinkhorn_distance(
     w_y: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
+    Adapted from https://github.com/fwilliams/scalable-pytorch-sinkhorn.
+
     Compute the entropy-regularized p-Wasserstein distance between two point clouds
     using the Sinkhorn scaling algorithm with KeOps LazyTensors.
 
@@ -135,7 +134,6 @@ def sinkhorn_distance(
                   (with entropic regularization eps)
     """
 
-    # --------- Basic checks ---------
     if not isinstance(p, int) or p <= 0:
         raise TypeError(f"p must be an integer greater than 0, got {p}")
     if eps <= 0:
@@ -162,7 +160,6 @@ def sinkhorn_distance(
             f"x.shape = {x.shape}, y.shape={y.shape}"
         )
 
-    # --------- Device / dtype handling ---------
     dtype = x.dtype
     device = x.device
     y = y.to(device=device, dtype=dtype)
@@ -170,7 +167,6 @@ def sinkhorn_distance(
     n, d = x.shape
     m = y.shape[0]
 
-    # --------- Weights handling ---------
     if w_x is not None:
         if w_y is None:
             raise ValueError("If w_x is not None, w_y must also be not None")
@@ -208,18 +204,14 @@ def sinkhorn_distance(
             f"(absolute difference = {abs(sum_w_x - sum_w_y)})"
         )
 
-    # --------- Build KeOps LazyTensors for cost matrix ---------
-    # x_i: (n, 1, d), y_j: (1, m, d)
     x_i = LazyTensor(x.view(n, 1, d))
     y_j = LazyTensor(y.view(1, m, d))
 
-    # Cost matrix C_ij (we follow your previous convention: metric, not metric^p)
     if p == 1:
         C_ij = (x_i - y_j).abs().sum(dim=2)        
     else:
         C_ij = ((x_i - y_j) ** p).sum(dim=2) ** (1.0 / p) 
 
-    # --------- Initialize dual variables (log-domain Sinkhorn) ---------
     log_a = torch.log(w_x)  
     log_b = torch.log(w_y)  
 
@@ -262,17 +254,15 @@ def sinkhorn_distance(
                 print(f"Converged after {_+1} iterations with max error {max_err:.3e}")
             break
 
-    # --------- Compute transport plan and distance (KeOps reductions) ---------
     # P_ij = exp( (u_i + v_j - C_ij) / eps )
     u_i = LazyTensor(u.view(n, 1, 1))
     v_j = LazyTensor(v.view(1, m, 1))
 
     log_P_ij = (u_i + v_j - C_ij) / eps
-    P_ij = log_P_ij.exp()  # [n, m] LazyTensor, never fully materialized
+    P_ij = log_P_ij.exp() 
 
     # distance = sum_{i,j} P_ij * C_ij
-    # KeOps reductions: first over j (dim=1), then over i (dim=0)
-    distance = (P_ij * C_ij).sum(dim=1).sum(dim=0)  # scalar tensor
+    distance = (P_ij * C_ij).sum(dim=1).sum(dim=0) 
 
     return distance
 

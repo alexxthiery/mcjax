@@ -24,10 +24,10 @@ class BaseModel(ABC):
 class MLPModel(nn.Module, BaseModel):
     """
     A “pure‐MLP” implementation for two‐branch score networks:
-      - NN1(x, t) : takes concatenated [x, time-embedding] → outputs (batch, dim)
-      - NN2(t)    : takes time-embedding only → outputs (batch, dim)
+      - NN1(x, t) : takes concatenated [x, time-embedding] -> outputs (batch, dim)
+      - NN2(t)    : takes time-embedding only -> outputs (batch, dim)
 
-    No residual blocks—just straight Dense→ReLU stacks.
+    No residual blocks—just straight Dense->ReLU stacks.
     """
     dim: int   # data dimension
     T:   int   # number of diffusion steps (max time index)
@@ -47,19 +47,19 @@ class MLPModel(nn.Module, BaseModel):
         emb_scale  = jnp.log(10000.0) / (half_dim - 1)
         freqs      = jnp.exp(jnp.arange(half_dim) * -emb_scale)
 
-        # ========== Time‐Embedding (shared logic) ==========
+        # ========== Time‐Embedding ==========
          # normalize t to [0, 1] range
         t = t  / (self.T - 1)
         t_proj = t[:, None] * freqs[None, :]
         t_emb  = jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)
 
-        # ========== NN1 Branch: (x + time) → MLP₁ → (batch, dim) ==========
+        # ========== NN1 Branch: (x + time) -> MLP1 -> (batch, dim) ==========
         te1 = nn.Sequential([
             nn.Dense(64), nn.relu,
             nn.Dense(128), nn.relu
         ])(t_emb) 
 
-        #Concatenate x (shape (batch, dim)) with te1 (batch, 128)
+        # Concatenate x (shape (batch, dim)) with te1 (batch, 128)
         h1 = jnp.concatenate([x, te1], axis=-1) 
 
         h1 = nn.Dense(256)(h1)
@@ -76,7 +76,7 @@ class MLPModel(nn.Module, BaseModel):
             bias_init  =nn.initializers.zeros
         )(h1)  
 
-        # ========== NN2 Branch: (time only) → MLP₂ → (batch, dim) ==========
+        # ========== NN2 Branch: (time only) -> MLP2 -> (batch, dim) ==========
         h2 = nn.Dense(128)(t_emb) 
         h2 = nn.relu(h2)
         h2 = nn.Dense(128)(h2)

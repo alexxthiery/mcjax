@@ -39,56 +39,55 @@ def parse_args():
         return v.lower() in ('true', '1', 'yes')
     parser = argparse.ArgumentParser(description="Neural Sampler Experiments")
     parser.add_argument("--algo",       type=str, default="dds",
-                        choices=["dds", "pis", "idem", "mcd", "cmcd"])
-    parser.add_argument("--target_dist",  type=str, default="1d")
+                        choices=["dds", "pis", "idem", "mcd", "cmcd"], help="which algorithm to use")
+    parser.add_argument("--target_dist",  type=str, default="1d", help="target distribution to sample from")
     parser.add_argument("--network_name", type=str, default="resblock",
-                        choices=["mlp", "resblock"])
+                        choices=["mlp", "resblock"], help="type of neural network architecture")
     parser.add_argument("--condition_term", type=str, default="grad_score",
-                        choices=["none", "score", "grad_score"])
-    parser.add_argument('--add_score', type=str2bool, default=True) 
-    parser.add_argument('--variable_ts', type=str2bool, default=False)  
-    parser.add_argument("--K",          type=int, default=200)
-    parser.add_argument("--T",          type=int, default=1)  
-    parser.add_argument("--sigma",      type=float, default=1.0)
-    parser.add_argument("--lr",         type=float, default=1e-4)
-    parser.add_argument("--batch_size", type=int, default=1000)
-    parser.add_argument("--num_steps",  type=int, default=1000)
-    parser.add_argument("--if_logZ",    type=str2bool, default=True)
-    parser.add_argument("--seed",       type=int, default=42)
-    parser.add_argument("--if_train",   type=str2bool, default=True)
-    parser.add_argument("--save_model", type=str2bool, default=False)
-    parser.add_argument("--model_path", type=str, default="model_params.pkl")
-    parser.add_argument("--results_dir", type=str, default="results")
-    parser.add_argument("--sigma_min",  type=float, default=0.5)
-    parser.add_argument("--sigma_max",  type=float, default=1.0)
-    parser.add_argument("--buffer_size", type=int, default=10000)
-    parser.add_argument("--inner_iters", type=int, default=100)
-    parser.add_argument("--outer_iters", type=int, default=100)
-    parser.add_argument("--num_samples_per_outer", type=int, default=1000)
-    parser.add_argument("--draw_buffer_interval", type=int, default=10)
-    parser.add_argument("--num_samples_for_sk", type=int, default=10000)
-    parser.add_argument("--debug_fill_buffer", type=str2bool, default=False)
-    parser.add_argument("--backdiffusion_true_score", type=str2bool, default=False)
-    parser.add_argument("--use_control_in_denominator", type=str2bool, default=True)
-    parser.add_argument("--to_visualize", type=str2bool, default=True)
-    parser.add_argument("--get_metrics", type=str2bool, default=True)
-    parser.add_argument("--write_logZ", type=str2bool, default=True)
-    parser.add_argument("--set_timestamp", type=str2bool, default=False)
-    parser.add_argument("--timestamp", type=str, default="default_timestamp")
-    parser.add_argument("--samples_for_final_visualization", type=int, default=10000)
+                        choices=["none", "score", "grad_score"], help="conditioning term for the score function")
+    parser.add_argument('--add_score', type=str2bool, default=True, help="whether to add noise term in DDS sampler") 
+    parser.add_argument('--variable_ts', type=str2bool, default=False, help="whether to use variable time steps")  
+    parser.add_argument("--K",          type=int, default=200, help="number of discretization steps")
+    parser.add_argument("--T",          type=int, default=1, help="total time horizon")  
+    parser.add_argument("--sigma",      type=float, default=1.0, help="noise scale")
+    parser.add_argument("--lr",         type=float, default=1e-4, help="learning rate")
+    parser.add_argument("--batch_size", type=int, default=1000, help="batch size for training")
+    parser.add_argument("--num_steps",  type=int, default=1000, help="number of training steps")
+    parser.add_argument("--if_logZ",    type=str2bool, default=True, help="whether to compute log partition function")
+    parser.add_argument("--seed",       type=int, default=42, help="random seed")
+    parser.add_argument("--if_train",   type=str2bool, default=True, help="whether to run training")
+    parser.add_argument("--save_model", type=str2bool, default=False, help="whether to save the trained model")
+    parser.add_argument("--model_path", type=str, default="model_params.pkl", help="path to save/load the model parameters")
+    parser.add_argument("--results_dir", type=str, default="results", help="directory to save results")
+    parser.add_argument("--sigma_min",  type=float, default=0.5, help="minimum sigma value for noise scale (used in iDEM)")
+    parser.add_argument("--sigma_max",  type=float, default=1.0, help="maximum sigma value for noise scale (used in iDEM)")
+    parser.add_argument("--buffer_size", type=int, default=10000, help="size of the buffer for storing samples (used in iDEM)")
+    parser.add_argument("--inner_iters", type=int, default=100, help="number of inner iterations (used in iDEM)")
+    parser.add_argument("--outer_iters", type=int, default=100, help="number of outer iterations (used in iDEM)")
+    parser.add_argument("--num_samples_per_outer", type=int, default=1000, help="number of samples per outer iteration (used in iDEM)")
+    parser.add_argument("--draw_buffer_interval", type=int, default=10, help="interval for drawing buffer samples (used in iDEM)")
+    parser.add_argument("--num_samples_for_sk", type=int, default=10000, help="number of samples to calculate score (used in iDEM)")
+    parser.add_argument("--debug_fill_buffer", type=str2bool, default=False, help="whether to fill the buffer with target samples for debugging (used in iDEM)")
+    parser.add_argument("--use_control_in_denominator", type=str2bool, default=True, help="whether to use control variate in denominator when estimating logZ (used in CMCD)")
+    parser.add_argument("--to_visualize", type=str2bool, default=True, help="whether to visualize final samples")
+    parser.add_argument("--get_metrics", type=str2bool, default=True, help="whether to compute metrics")
+    parser.add_argument("--write_logZ", type=str2bool, default=True, help="whether to write logZ estimates to file")
+    parser.add_argument("--set_timestamp", type=str2bool, default=False, help="whether to set a timestamp for the results folder")
+    parser.add_argument("--timestamp", type=str, default="default_timestamp", help="self-defined timestamp string for the results folder if set_timestamp is True")
+    parser.add_argument("--samples_for_final_visualization", type=int, default=10000, help="number of samples for final visualization")
     parser.add_argument("--loss_type", type=str, default="kl",
-                        choices=["kl", "lv"])
-    parser.add_argument("--sde_ctrl_noise", type=float, default=0.0)
-    parser.add_argument("--do_grid_search", type=str2bool, default=False)
-    parser.add_argument("--dw_draw_marginals", type=str2bool, default=False)
-    parser.add_argument("--dw_draw_well_hist", type=str2bool, default=False)
-
-    parser.add_argument("--m",type=int, default=5)
-    parser.add_argument("--delta",type=float, default=4.0)
-    parser.add_argument("--dim",type=int, default=5)
-    parser.add_argument("--sigma_x",type=float, default=3.0)
-    parser.add_argument("--offset", nargs='+', type=float, default=[0.0, 0.0, 0.0, 0.0, 0.0])
-    parser.add_argument("--diaggauss_var", nargs='+', type=float)
+                        choices=["kl", "lv"], help="type of loss function to use")
+    parser.add_argument("--sde_ctrl_noise", type=float, default=0.0, help="additional noise scale for LV loss")
+    parser.add_argument("--do_grid_search", type=str2bool, default=False, help="whether to perform a grid search for hyperparameters")
+    parser.add_argument("--dw_draw_marginals", type=str2bool, default=False, help="whether to draw marginals for DW")
+    parser.add_argument("--dw_draw_well_hist", type=str2bool, default=False, help="whether to draw well histogram for DW")
+    
+    parser.add_argument("--m",type=int, default=5, help="parameter m (used in double well target)")
+    parser.add_argument("--delta",type=float, default=4.0, help="parameter delta (used in double well target)")
+    parser.add_argument("--dim",type=int, default=5, help="dimension of the target distribution")
+    parser.add_argument("--sigma_x",type=float, default=3.0, help="parameter sigma_x (used in Funnel target)")
+    parser.add_argument("--offset", nargs='+', type=float, default=[0.0, 0.0, 0.0, 0.0, 0.0], help="offset values of doublewell target in each dimension")
+    parser.add_argument("--diaggauss_var", nargs='+', type=float, help="diagonal Gaussian variances (used in diaggauss target)")
 
     return parser.parse_args()
 
@@ -101,7 +100,7 @@ def append_metrics(algo, target, loss_type, delta_logZ, wass, sink, target_folde
             with open(fname, "r") as f:
                 data = json.load(f)
         except json.JSONDecodeError:
-            data = {}  # Handle empty or corrupted file
+            data = {}  
     else:
         data = {}
 
@@ -319,34 +318,13 @@ def grid_summarize(target_folder_path, excel_path="metric_results_grid.xlsx"):
         if not metric_cols:
             print(f"No metric columns found for {method}-{loss}, skipping.")
             continue
-        '''
-        Compute MeanRank PER TARGET
-        For each Target separately, pick the best (K, LR).
-        We rank all hyperparameter settings (K, LR) using .rank() on the metric columns.
-        For each (K, LR) row, we average its rank across metrics 
-        '''
 
-        def compute_meanrank_per_target(group):
-            ranks = group[metric_cols].rank()  # rank within this target
-            return ranks.mean(axis=1)          
-
-
-        meanrank_series = pivot_reset.groupby("Target", group_keys=False).apply(
-            compute_meanrank_per_target
-        )
-
-        # Drop the group index level so its index matches pivot_reset
-        # meanrank_series.index = meanrank_series.index.droplevel(0)
-        # meanrank_series = meanrank_series.reindex(pivot_reset.index)
-
-
-        print("meanrank_series:", meanrank_series)
-
-        pivot_reset["MeanRank"] = meanrank_series
+        ranks = pivot_reset.groupby("Target")[metric_cols].rank()
+        pivot_reset["MeanRank"] = ranks.mean(axis=1)
 
         best_idx_per_target = pivot_reset.groupby("Target")["MeanRank"].idxmin()
 
-        # Mark which rows are "best" for their target
+        # Mark which rows are best for their target
         pivot_reset["IsBest"] = pivot_reset.index.isin(best_idx_per_target)
 
         # Sort rows so that same targets are together in the sheet
@@ -417,13 +395,6 @@ def main():
     target_folder_path = f"{args.folder_path}/{args.target_dist}_DIM={alg.data_dim}"
     os.makedirs(target_folder_path, exist_ok=True)
     
-    if args.algo == "idem" and args.backdiffusion_true_score and args.target_dist == "1d":
-        print("Using true score function for backdiffusion in IDEM...")
-        key = jr.PRNGKey(0)
-        seq, score_seq = alg.sample_backward_true(key, num_samples=10000)
-        figname = "backdiffusion_true_score"
-        alg.visualize_samples(seq)
-        return
 
     # Training or Load
     key = jr.PRNGKey(args.seed)
@@ -537,7 +508,7 @@ def main():
         # Sampling
         key, sub = jr.split(key)
         samples_seq, score_seq = alg.sample(alg.state.params, sub, num_samples=args.samples_for_final_visualization)
-        samples_seq = jax.device_get(samples_seq)  # shape (K, N, dim)
+        samples_seq = jax.device_get(samples_seq) 
         score_seq = jax.device_get(score_seq)    
         
 
@@ -557,7 +528,7 @@ def main():
                 torch.tensor(np.array(tgt_samps)).clone(),
                 max_iters=2000,
                 eps=1e-3
-            ).item() # sinkhorn distance
+            ).item()
             print(f"Sinkhorn distance : {sink:.4e}")
         else:
             wass = float('nan')
@@ -578,11 +549,11 @@ def main():
 
         if args.dw_draw_marginals and args.target_dist == "doublewell":
             print("Drawing DoubleWell marginals...")
-            alg.target_dist.plot_doublewell_marginals(args.folder_path, args.algo, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
+            alg.target_dist.plot_doublewell_marginals(args.folder_path, args.algo, args.loss_type, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
 
         if args.dw_draw_well_hist and args.target_dist == "doublewell":
             print("Drawing DoubleWell well histogram...")
-            alg.target_dist.plot_doublewell_well_hist(args.folder_path, args.algo, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
+            alg.target_dist.plot_doublewell_well_hist(args.folder_path, args.algo, args.loss_type, np.array(samples_seq[-1]), alg.target_dist.delta, alg.target_dist.m)
 if __name__ == "__main__":
     print(f"Available devices: {jax.devices()}")
     jax.config.update("jax_platform_name", "gpu")

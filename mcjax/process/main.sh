@@ -7,7 +7,7 @@ algo='mcd' # 'dds'： Denoising Diffusion Sampling;
             # 'pis':path integral sampler; 
             #'idem': Iterative Denoising Estimation Method; 
             # 'mcd': Monte Carlo Denoising(Set use_control_in_denominator to true for CMCD, false for MCD)
-target_dist='diaggauss' # 'gmm40': 40-component Gaussian Mixture Model; 
+target_dist='doublewell' # 'gmm40': 40-component Gaussian Mixture Model; 
                 # 'gmmfixed': Fixed 2-d gaussian with 9 components;
                 # '1d': 1-d Gaussian Mixture Model； 
                 # 'funnel': 2-d Funnel distribution;
@@ -20,7 +20,7 @@ add_score=true # Add score term to the loss function
 variable_ts=false # Use variable time steps; Always set this to false: No need to use variable time steps 
 K=200 # Number of steps in the process 
 T=1 # Time 
-sigma=1.0 # Noise scale for the backward process
+sigma=1.0 # Noise for initial gaussian distribution
 lr=1e-4 # Learning rate
 batch_size=256 # Batch size
 num_steps=3000 # Number of steps for training

@@ -18,7 +18,7 @@ class OU:
     """
     def __init__(self,
                  T: int,  # total time
-                 alpha: jnp.ndarray, # array of shape (K,), where alpha[k] = 1 - exp(-2 ∫β_s ds) over step k
+                 alpha: jnp.ndarray, # array of shape (K,), where alpha[k] = 1 - exp(-2\int \beta_s ds) over step k
                  sigma: float,
                  init_dist: LogDensity):
 
@@ -38,11 +38,6 @@ class OU:
         """
         Draw N samples at time index k of the forward OU chain,
         marginalizing out all intermediate epsilons in one shot.
-        This uses the *exact* marginal:
-          y_k = sqrt(prod_{j<k} (1-alpha[j])) * y_0
-                + sigma * sqrt(1 - prod_{j<k} (1-alpha[j])) * eps
-        
-        For simplicity we just iterate one step at a time here.
         """
         def body(i, carry):
             y, key = carry
@@ -53,7 +48,7 @@ class OU:
 
         # sample y_0
         key, key_ = jr.split(key)
-        y0 = self.init_dist.sample(key_, N)  # shape (N, D,…)
+        y0 = self.init_dist.sample(key_, N)  
         # run exactly k steps
         (y_k, _ ) = jax.lax.fori_loop(0, k, body, (y0, key))
         return y_k
@@ -82,7 +77,6 @@ class OU:
             key, y = self.reverse_step(key, y, i, score_fn, params)
             return y, key
 
-        # Initialize carry with (y_K = x1, PRNG key)
         (y0, _key) = jax.lax.fori_loop(0, self.K, body, (x1, key))
         return y0
 
@@ -91,9 +85,9 @@ class OU:
     def log_marginal(self, x: jnp.ndarray, k: int) -> jnp.ndarray:
         """
         Compute the log marginal density of x at time index k for 
-        standard gaussian inital dstribution
+        standard gaussian initial distribution
         """
-        # compute total variance factor: v = σ² (1 - ∏ (1-α))
+        # compute total variance factor: v = \sigma^2 (1 - \prod (1-\alpha_i))
         prod_1m = jnp.prod(1.0 - self.alpha[:k])
         var = self.sigma**2 * (1.0 - prod_1m)
         D   = x.shape[-1]

@@ -198,12 +198,15 @@ class DiagGauss(LogDensity):
                 ):
         # make sure that sigma is a vector
         assert jnp.ndim(log_var) == 1
+        # make sure that number of dimensions is the same
+        assert len(mu) == len(log_var), "Length of mu and log_var must match"
         self.mu = mu
         self.log_var = log_var
         self.sigma = jnp.exp(0.5*self.log_var)  # vector of marginal standard deviation
         self._dim = len(mu)
         logdet = jnp.sum(self.log_var)
         self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+        self.can_sample = True
         
     def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu) / self.sigma)) - self._log_Z

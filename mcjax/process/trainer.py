@@ -11,7 +11,7 @@ class Trainer:
       - algorithm (has .state, .score_fn, .loss_obj, .ou, .init_dist, .target_dist, .sample())
       - process (e.g. OU instance)
       - init_dist, target_dist, score_fn, loss_obj, state, batch_size, num_steps, if_logZ
-    Then `run(rng_key)` executes the scan and returns results.
+    Then 'run(rng_key)' executes the scan and returns results.
     """
 
     def __init__(self,
@@ -59,8 +59,8 @@ class Trainer:
     @partial(jax.jit, static_argnums=(0,))
     def run(self, rng_key):
         """
-        Runs `num_steps` of training with jax.lax.scan.  
-        Returns final_state, rng_key, loss_history, (and optionally logZ values, logZ vars).
+        Runs 'num_steps' of training with jax.lax.scan.  
+        Returns final_state, rng_key, losses, logZ values, logZ vars.
         """
         def scan_body(carry, step):
             state, key, logz_vals, logz_vars = carry
@@ -121,7 +121,6 @@ class InnerTrainer:
         self.state = state
         self.inner_iters = inner_iters
 
-        # JIT‐compile a loss‐and‐grad function that calls IDEMLoss:
         self.loss_and_grad = jax.jit(
             jax.value_and_grad(self._loss_fn, argnums=0, has_aux=True),
             static_argnums=(2,)
@@ -148,11 +147,11 @@ class InnerTrainer:
     @partial(jax.jit, static_argnums=(0,))
     def run(self, rng_key, buffer):
         """
-        Runs exactly `inner_iters` gradient steps, all inside a single lax.scan.
+        Runs exactly 'inner_iters' gradient steps, all inside a single lax.scan.
         Returns (final_state, final_key, losses_array), where
           - final_state: updated TrainState
           - final_key: final PRNGKey after splitting
-          - losses_array: jnp array of shape (inner_iters,) with each step’s loss
+          - losses_array: jnp array of shape (inner_iters,) with each step's loss
         """
         def inner_body(carry, _unused):
             state, key, buffer = carry
