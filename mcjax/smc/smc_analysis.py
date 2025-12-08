@@ -9,6 +9,7 @@ import argparse
 from typing import TypedDict
 import time
 from scipy.special import logsumexp
+import pandas as pd
 
 # add ../mcjax to the path
 import os
@@ -103,8 +104,8 @@ def parse_args():
     parser.add_argument("--max_step", type=int, default=100)
     parser.add_argument("--ess_normalized_target", type=float, default=0.6)
     parser.add_argument("--if_adaptive", type=str2bool, default=True)
-    parser.add_argument("--reference", type=str, default='Gaussian')
-    parser.add_argument("--target", type=str, default='Funnel')
+    parser.add_argument("--reference", type=str, default='gaussian')
+    parser.add_argument("--target", type=str, default='funnel')
     parser.add_argument("--dim", type=int, default=2)
     parser.add_argument("--method", type=str, default='RWM', choices=['RWM', 'MALA'])
 
@@ -268,6 +269,101 @@ def smc_test2():
     plt.savefig(os.path.join(target_folder, f'logZ_mean_var_{reference}_{target}_DIM={dim}.png'))
     plt.close()
 
+# Test 3: Generate mean and variance of log Z with 10_000 particles for dw and funnel targets
+def smc_test3(): 
+    args = parse_args()
+    num_run = args.num_runs
+    step_size = args.step_size
+    num_substeps = args.num_substeps
+    max_step = args.max_step
+    ess_normalized_target = args.ess_normalized_target
+    coefs = jnp.arange(args.num_steps + 1) / args.num_steps
+    reference = args.reference
+
+    num_particles = 10000
+
+    # Target to dimensions mapping
+    target_dims = {
+        "doublewell": [5, 10, 20, 50, 100, 200],
+        "funnel":     [2, 5, 10, 20, 50, 100],
+        "mixedgaussian": [2, 5, 10, 20, 50, 100],
+    }
+
+    methods = ["RWM", "MALA"]
+
+    if not os.path.exists('stats'):
+        os.makedirs('stats')
+    writer = pd.ExcelWriter("stats/smc_results.xlsx", engine="openpyxl")
+
+    for target in ["doublewell", "funnel", "mixedgaussian"]:
+        dims = target_dims[target]
+
+        # Prepare table for this sheet
+        results = {
+            "dimension": [],
+            "mean_delta_logZ_RWM": [],
+            "var_logZ_RWM": [],
+            "mean_delta_logZ_MALA": [],
+            "var_logZ_MALA": [],
+        }
+
+        for dim in dims:
+            print(f"\n===== Running target={target}, dimension={dim} =====")
+
+            param = (dim, args.m, args.delta, args.sigma_x)
+
+            log_gamma_0 = get_log_dist(reference, param)
+            log_gamma_T = get_log_dist(target, param)
+
+            true_logZ = log_gamma_T.log_Z() - log_gamma_0.log_Z()
+
+            # store dimension
+            results["dimension"].append(dim)
+
+            # Run both methods (RWM + MALA)
+            for method in methods:
+                key = jr.key(0)
+
+                GSMC = GeometricSMC(
+                    log_gamma_0=log_gamma_0,
+                    log_gamma_T=log_gamma_T,
+                    coefs=coefs,
+                    step_size=step_size,
+                    num_substeps=num_substeps,
+                    keep_particles=False,
+                    max_step=max_step,
+                    ess_normalized_target=ess_normalized_target
+                )
+
+                logZ_arr, _ = mult_run(
+                    GSMC,
+                    num_particles=num_particles,
+                    key=key,
+                    mc_method=method,
+                    num_run=num_run,
+                    if_adaptive=True
+                )
+
+                mean_delta = float(jnp.abs(jnp.mean(logZ_arr) - true_logZ))
+                var_logZ = float(jnp.var(logZ_arr))
+
+                if method == "RWM":
+                    results["mean_delta_logZ_RWM"].append(mean_delta)
+                    results["var_logZ_RWM"].append(var_logZ)
+                else:
+                    results["mean_delta_logZ_MALA"].append(mean_delta)
+                    results["var_logZ_MALA"].append(var_logZ)
+
+        # Convert results to DataFrame
+        df = pd.DataFrame(results)
+
+        # Write this sheet
+        df.to_excel(writer, sheet_name=target, index=False)
+
+    writer.close()
+    print("\nExcel file 'stats/smc_results.xlsx' generated successfully.")
+
 if __name__ == "__main__":
     smc_test1()
     smc_test2()
+    # smc_test3()

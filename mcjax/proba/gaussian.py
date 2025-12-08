@@ -31,6 +31,7 @@ class IsotropicGauss(LogDensity):
         self._dim = len(mu)
         logdet = self.dim*self.log_var
         self._log_Z = 0.5 * self.dim * jnp.log(2 * jnp.pi) + 0.5*logdet
+        self.can_sample = True
 
     def logdensity(self, x):
         return -0.5 * jnp.sum(jnp.square((x - self.mu[None, :]) / self.sigma)) - self._log_Z
@@ -53,9 +54,7 @@ class IsotropicGauss(LogDensity):
         return jax.random.normal(key, (n_samples, self.dim)) * self.sigma + self.mu[None, :]
     
     def log_Z(self):
-        """ log partition function """
-        return -0.5 * self.dim * jnp.log(2 * jnp.pi) - self.dim*jnp.log(self.sigma)
-
+        return 0.0
 
 # ==================================
 # Mixed Isotropic Gaussian Distribution

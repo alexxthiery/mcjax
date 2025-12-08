@@ -5,7 +5,7 @@ from jax import random, grad
 
 import numpy as np
 from typing import Optional
-from scipy.special import iv
+from scipy.special import ive, logsumexp
 from scipy.stats import norm
 from matplotlib import pyplot as plt
 from itertools import product
@@ -92,14 +92,24 @@ class DoubleWell(LogDensity):
         m = self.m
         d = self._dim
 
-        # Modified Bessel components (real combination)
         z = delta**2 / 2.0
-        I_pos = iv(0.25, z)
-        I_neg = iv(-0.25, z)
-        I_delta = 0.5 * jnp.sqrt(jnp.pi / 2) * jnp.exp(-delta**2 / 2) * (I_pos + I_neg)
 
-        Z = (I_delta**m) * ((jnp.sqrt(2 * jnp.pi)) ** (d - m))
-        return jnp.log(Z)
+        # scaled Bessel functions: ive(v, z) = exp(-z) * I_v(z)
+        I_pos_scaled = ive(0.25, z)
+        I_neg_scaled = ive(-0.25, z)
+
+        # I(delta) = (π/2) * sqrt(delta) * (ive(1/4,z) + ive(-1/4,z))
+        # compute log I(delta) stably
+        log_I_delta = (
+            np.log(np.pi / 2.0)  # log(π/2)
+            + 0.5 * np.log(delta)  # log sqrt(delta)
+            + logsumexp([np.log(I_pos_scaled), np.log(I_neg_scaled)])
+        )
+
+        # Gaussian part
+        log_gaussian = (d - m) * 0.5 * np.log(2 * np.pi)
+
+        return m * log_I_delta + log_gaussian
 
     def plot_doublewell_marginals(self, folder_path, method_name, samples, delta, m):
         """
@@ -122,10 +132,10 @@ class DoubleWell(LogDensity):
             return norm.pdf(x, 0, 1)
 
         # 1D MARGINALS 
-        fig, axes = plt.subplots(d, 1, figsize=(6, 3*d))
+        fig, axes = plt.subplots(min(d, 10), 1, figsize=(6, 3*min(d, 10)))
         xs = np.linspace(-3*np.sqrt(delta), 3*np.sqrt(delta), 400)
 
-        for i in range(d):
+        for i in range(min(d, 10)):  # limit to first 10 dims for visibility
             ax = axes[i]
             ax.hist(samples[:, i], bins=80, density=True, alpha=0.5, label="empirical")
 
@@ -138,14 +148,16 @@ class DoubleWell(LogDensity):
             ax.legend()
 
         plt.tight_layout()
-        plt.savefig(f"{folder_path}/doublewell/{method_name}_doublewell_1D_marginals.png")
+        # print m, delta and dim
+        plt.suptitle(f"DoubleWell Marginals (m={m}, delta={delta}, dim={d})", y=1.02, fontsize=16)
+        plt.savefig(f"{folder_path}/doublewell_DIM={d}/{method_name}_doublewell_1D_marginals.png")
         plt.close()
 
         # 2D MARGINALS (x1 vs xj)
-        fig, axes = plt.subplots(1, d-1, figsize=(4*(d-1), 4))
+        fig, axes = plt.subplots(1, min(d, 10)-1, figsize=(4*(min(d, 10)-1), 4))
         x1 = samples[:, 0]
 
-        for j in range(1, d):
+        for j in range(1, min(d, 10)): # just plot first min(d, 10) double-well dims
             ax = axes[j-1]
             ax.hist2d(x1, samples[:, j], bins=80, density=True, cmap='viridis')
             ax.set_xlabel("x1")
@@ -153,7 +165,8 @@ class DoubleWell(LogDensity):
             ax.set_title(f"2D marginal: x1 vs x{j+1}")
 
         plt.tight_layout()
-        plt.savefig(f"{folder_path}/doublewell/{method_name}_doublewell_2D_marginals.png")
+        plt.suptitle(f"DoubleWell 2D Marginals (m={m}, delta={delta}, dim={d})", y=1.02, fontsize=16)
+        plt.savefig(f"{folder_path}/doublewell_DIM={d}/{method_name}_doublewell_2D_marginals.png")
         plt.close()
 
     def plot_doublewell_well_hist(self, folder_path, method_name, samples, delta, m):
@@ -199,7 +212,8 @@ class DoubleWell(LogDensity):
         plt.title(f"Well Repartition (m={m}, delta={delta})")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(f"{folder_path}/doublewell/{method_name}_doublewell_well_hist.png")
+        plt.suptitle(f"DoubleWell Well Histogram (m={m}, delta={delta}, dim={d})", y=1.02, fontsize=16)
+        plt.savefig(f"{folder_path}/doublewell_DIM={d}/{method_name}_doublewell_well_hist.png")
         plt.close()
 
         return probs, theoretical, wells
