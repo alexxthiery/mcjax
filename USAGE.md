@@ -9,55 +9,68 @@ Practical examples for using mcjax.
 ```python
 import jax.numpy as jnp
 import jax.random as jr
-from mcjax.mcmc.rwm import create_rwm_kernel
+from mcjax.mcmc import rwm
 from mcjax.proba.banana2d import Banana2D
 
-# Create target and kernel
+# Create target
 target = Banana2D.create()
-kernel = create_rwm_kernel(dim=2, cov_type="diag")
-
-# Initialize
-params = kernel.init_params(step_size=0.5)
-x_init = jnp.zeros(2)
 key = jr.key(42)
+x_init = jnp.zeros(2)
 
-# Run single chain
-out = kernel.run_mcmc(
+# Convenience API (recommended)
+output = rwm.sample(
     log_prob=target.log_prob,
     x_init=x_init,
-    params=params,
     key=key,
     n_samples=5000,
+    step_size=0.5,
 )
 
-samples = out.traj.x  # shape: (5000, 2)
-print(f"Acceptance rate: {out.summary.acceptance_rate:.2%}")
+samples = output.states.x  # shape: (5000, 2)
+acceptance_rate = jnp.mean(output.stats.is_accept)
+print(f"Acceptance rate: {acceptance_rate:.2%}")
 ```
 
 ### MALA (Langevin)
 
 ```python
-from mcjax.mcmc.mala import create_mala_kernel
+from mcjax.mcmc import mala
 
-kernel = create_mala_kernel(dim=2, cov_type="diag")
-params = kernel.init_params(step_size=0.1, grad_clip_norm=10.0)
-
-out = kernel.run_mcmc(
+output = mala.sample(
     log_prob=target.log_prob,
     x_init=x_init,
-    params=params,
     key=key,
     n_samples=5000,
+    step_size=0.1,
+    grad_clip=10.0,  # optional: clip gradients
 )
+```
+
+### Low-Level API
+
+```python
+from mcjax.mcmc import rwm, run_mcmc
+
+# Create state and params explicitly
+state = rwm.init_state(target.log_prob, x_init)
+params = rwm.make_params(step_size=0.5, cov=jnp.ones(2))
+
+# Run chain
+output = run_mcmc(rwm.step, target.log_prob, state, params, key, n_samples=5000)
 ```
 
 ### Multiple Chains
 
 ```python
+from mcjax.mcmc import rwm, run_mcmc_batch
+
 n_chains = 8
 xs_init = jr.normal(jr.key(0), (n_chains, 2))
+params = rwm.make_params(step_size=0.5, cov=jnp.ones(2))
 
-out = kernel.run_mcmc_batch(
+output = run_mcmc_batch(
+    step_fn=rwm.step,
+    init_state_fn=rwm.init_state,
     log_prob=target.log_prob,
     xs_init=xs_init,
     params=params,
@@ -65,19 +78,32 @@ out = kernel.run_mcmc_batch(
     n_samples=1000,
 )
 
-# out.traj.x has shape (8, 1000, 2)
-# out.summary.acceptance_rate has shape (8,) - per chain
+# output.states.x has shape (8, 1000, 2)
 ```
 
 ### Full Covariance Proposals
 
 ```python
 # Estimate covariance from pilot run
-pilot_samples = out.traj.x[-500:]  # last 500 samples
+pilot_samples = output.states.x[:, -500:, :].reshape(-1, 2)
 cov = jnp.cov(pilot_samples.T)
 
-kernel_full = create_rwm_kernel(dim=2, cov_type="full")
-params_full = kernel_full.init_params(step_size=0.5, cov=cov)
+# Use full covariance
+params_full = rwm.make_params(step_size=0.5, cov=cov)
+```
+
+### Adapting Parameters
+
+```python
+# Adapt step_size and covariance from samples
+samples = output.states.x.reshape(-1, 2)  # flatten chains
+adapted_params = rwm.adapt(
+    log_prob=target.log_prob,
+    xs=samples,
+    params=params,
+    key=key,
+)
+print(f"Adapted step_size: {adapted_params.step_size:.3f}")
 ```
 
 ## Sequential Monte Carlo
@@ -86,7 +112,7 @@ params_full = kernel_full.init_params(step_size=0.5, cov=cov)
 
 ```python
 from mcjax.smc.core import run_smc
-from mcjax.mcmc.rwm import create_rwm_kernel
+from mcjax.mcmc import rwm
 from mcjax.proba.gauss import GaussianDiag
 
 # Base: standard Gaussian
@@ -100,16 +126,16 @@ target = Banana2D.create()
 N = 500
 xs_init = base.sample(base_params, jr.key(0), N)
 
-# MCMC kernel for mutation
-kernel = create_rwm_kernel(dim=2, cov_type="diag")
-kernel_params = kernel.init_params(step_size=0.5)
+# MCMC kernel parameters
+kernel_params = rwm.make_params(step_size=0.5, cov=jnp.ones(2))
 
 # Run SMC
 out = run_smc(
     log_prob_base=lambda x: base.log_prob(base_params, x),
     log_prob_target=target.log_prob,
     xs_init=xs_init,
-    kernel=kernel,
+    step_fn=rwm.step,
+    init_state_fn=rwm.init_state,
     kernel_params=kernel_params,
     n_mcmc_steps=10,
     key=jr.key(1),
@@ -122,18 +148,21 @@ print(f"Temperature steps: {out.N_temperature}")
 ### SMC with Adaptation
 
 ```python
-from mcjax.mcmc.rwm import rwm_adapt
+# Define adaptation function
+def adapt_fn(log_prob, xs, params, key):
+    return rwm.adapt(log_prob, xs, params, key, n_iters=5)
 
 out = run_smc(
     log_prob_base=lambda x: base.log_prob(base_params, x),
     log_prob_target=target.log_prob,
     xs_init=xs_init,
-    kernel=kernel,
+    step_fn=rwm.step,
+    init_state_fn=rwm.init_state,
     kernel_params=kernel_params,
     n_mcmc_steps=10,
     key=jr.key(1),
-    adapt_kernel_fn=rwm_adapt,  # Adapts step size at each temperature
-    ess_threshold=0.5,          # Resample when ESS < 50%
+    adapt_fn=adapt_fn,
+    ess_threshold=0.5,
 )
 ```
 
@@ -146,11 +175,12 @@ out = run_smc(
     log_prob_base=lambda x: base.log_prob(base_params, x),
     log_prob_target=target.log_prob,
     xs_init=xs_init,
-    kernel=kernel,
+    step_fn=rwm.step,
+    init_state_fn=rwm.init_state,
     kernel_params=kernel_params,
     n_mcmc_steps=10,
     key=jr.key(1),
-    temp_ladder=temps,  # Deterministic schedule
+    temp_ladder=temps,
 )
 ```
 
@@ -175,20 +205,16 @@ log_p = banana.log_prob(x)
 ### Custom Target Distribution
 
 ```python
-from mcjax.proba.distribution import make_distribution
-
-def my_log_prob(params, x):
+def my_log_prob(x):
     # Rosenbrock function (as negative log-density)
     return -((1 - x[0])**2 + 100*(x[1] - x[0]**2)**2)
 
-dist, params = make_distribution(my_log_prob, dim=2)
-
-# Use with MCMC
-out = kernel.run_mcmc(
-    log_prob=dist.log_prob_only,
+# Use directly with MCMC
+output = rwm.sample(
+    log_prob=my_log_prob,
     x_init=jnp.zeros(2),
-    params=kernel_params,
     key=key,
     n_samples=5000,
+    step_size=0.01,
 )
 ```

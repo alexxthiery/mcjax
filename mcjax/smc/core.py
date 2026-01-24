@@ -6,23 +6,21 @@ Core idea
 ---------
 We construct a sequence of tempered distributions
 
-    pi_t(x) propto p0(x)^(1 - t) * p1(x)^t,    t ∈ [0, 1]
+    pi_t(x) propto p0(x)^(1 - t) * p1(x)^t,    t in [0, 1]
 
-and move a cloud of N particles through temperatures 0 → 1 using:
+and move a cloud of N particles through temperatures 0 -> 1 using:
 
 1. Weight update as temperature increases.
 2. Resampling based on ESS.
-3. MCMC mutation with a given MarkovKernel at each temperature.
+3. MCMC mutation with a given step function at each temperature.
 
 The SMC engine is agnostic to the particular MCMC kernel, as long as:
 
-- The kernel is a `MarkovKernel`.
-- Its state has fields `x` and `log_prob`.
-- `kernel.run_mcmc_batch` returns an `MCMCOutput` with a trajectory whose
-  `x` and `log_prob` fields have shape `(N, n_steps, ...)` and `(N, n_steps)`.
+- The step function has signature: step_fn(key, log_prob, state, params) -> (state, stats)
+- The state has fields `x` and `log_prob`.
 
 Adaptation (e.g. of step size or covariance) is handled by an optional
-`adapt_kernel_fn`, not as a method on the kernel itself.
+`adapt_fn`, not as a method on the kernel itself.
 """
 
 from typing import Any, Callable, Optional
@@ -31,7 +29,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from mcjax.mcmc.core import MarkovKernel
+from mcjax.mcmc.core import run_mcmc_batch
 from mcjax.util.weights import (
     effective_sample_size_normalized,
     normalize_log_weights,
@@ -78,10 +76,9 @@ class SMCState:
                              History of kernel params across steps; same PyTree
                              structure as `kernel_params`, but with a leading
                              axis of length n_temp_max in each leaf.
-        mcmc_summary_history:
-                             History of per-step MCMC summaries (PyTree with
-                             leading axis n_temp_max), or None if the kernel
-                             does not provide summaries.
+        mcmc_stats_history:
+                             History of per-step MCMC stats (PyTree with
+                             leading axis n_temp_max), or None.
     """
     # core state
     xs: Array
@@ -98,7 +95,7 @@ class SMCState:
     ess_history: Array
     logZ_increments: Array
     kernel_params_history: Any
-    mcmc_summary_history: Any
+    mcmc_stats_history: Any
 
 
 @struct.dataclass
@@ -125,10 +122,8 @@ class SMCOutput:
     kernel_params_history:
         History of kernel parameters across steps, truncated to N_temperature.
         Same PyTree structure as initial kernel_params, with leading axis N_temperature.
-    summary:
-        History of MCMC summary statistics across steps, truncated to N_temperature.
-        PyTree with leading axis N_temperature, or None if summaries are not provided
-        by the kernel.
+    stats_history:
+        History of MCMC stats across steps, or None.
     """
     N_temperature: int
     xs: Array
@@ -138,7 +133,7 @@ class SMCOutput:
     logZ_incr: Array
     logZ: float
     kernel_params_history: Any
-    summary: Any
+    stats_history: Any
 
 
 def prettify_smc_output(smc_out: SMCOutput) -> SMCOutput:
@@ -161,10 +156,10 @@ def prettify_smc_output(smc_out: SMCOutput) -> SMCOutput:
     kernel_params_history = tree_truncate_leading(
         smc_out.kernel_params_history, N_temperature
     )
-    if smc_out.summary is not None:
-        summary = tree_truncate_leading(smc_out.summary, N_temperature)
+    if smc_out.stats_history is not None:
+        stats_history = tree_truncate_leading(smc_out.stats_history, N_temperature)
     else:
-        summary = None
+        stats_history = None
 
     return SMCOutput(
         N_temperature=smc_out.N_temperature,
@@ -175,7 +170,7 @@ def prettify_smc_output(smc_out: SMCOutput) -> SMCOutput:
         logZ_incr=logZ_incr,
         logZ=smc_out.logZ,
         kernel_params_history=kernel_params_history,
-        summary=summary,
+        stats_history=stats_history,
     )
 
 
@@ -184,13 +179,14 @@ def run_smc(
     log_prob_base: Callable[[Array], Array],
     log_prob_target: Callable[[Array], Array],
     xs_init: Array,
-    kernel: MarkovKernel,
+    step_fn: Callable,
+    init_state_fn: Callable,
     kernel_params: Any,
     n_mcmc_steps: int,
     n_temp_max: int = 100,
     key: jax.Array,
-    adapt_kernel_fn: Optional[
-        Callable[[MarkovKernel, Callable[[Array], Array], Array, Any, jax.Array], Any]
+    adapt_fn: Optional[
+        Callable[[Callable[[Array], Array], Array, Any, jax.Array], Any]
     ] = None,
     ess_threshold: float = 0.5,
     temp_ladder: Optional[Array] = None,
@@ -204,14 +200,14 @@ def run_smc(
 
         - Start from a base distribution p0.
         - Move particles through a sequence of tempered distributions
-          pi_t(x) ∝ p0(x)^(1-t) p1(x)^t until t = 1.
+          pi_t(x) propto p0(x)^(1-t) p1(x)^t until t = 1.
 
     At each temperature step:
         1. We update particle weights for the temperature increment.
         2. We compute the ESS and increment the estimate of log Z.
         3. We resample particles.
         4. We adapt the MCMC kernel (optionally) based on the tempered target.
-        5. We run an MCMC mutation with the given MarkovKernel.
+        5. We run an MCMC mutation.
 
     Parameters
     ----------
@@ -222,22 +218,23 @@ def run_smc(
         Function log p1(x) for the target distribution. Same interface as log_prob_base.
     xs_init:
         Initial particle positions, shape (N, D). Assumed to be drawn from p0.
-    kernel:
-        MarkovKernel instance that defines the MCMC mutation kernel. Its state must
-        have fields `x` and `log_prob` for SMC to extract final states and log-probs.
+    step_fn:
+        MCMC step function: step_fn(key, log_prob, state, params) -> (state, stats).
+        The state must have fields `x` and `log_prob`.
+    init_state_fn:
+        Function to create MCMC state: init_state_fn(log_prob, x) -> state.
     kernel_params:
-        Initial parameters for the MarkovKernel; typically something like RwmParams,
-        MalaParams, etc.
+        Initial parameters for the MCMC kernel (e.g., rwm.Params, mala.Params).
     n_mcmc_steps:
         Number of MCMC steps per SMC temperature stage.
     n_temp_max:
         Maximum number of temperature stages. The algorithm stops earlier if t reaches 1.
     key:
         JAX PRNG key.
-    adapt_kernel_fn:
+    adapt_fn:
         Optional adaptation function:
 
-            adapt_kernel_fn(kernel, log_prob_t, xs, params, key) -> new_params
+            adapt_fn(log_prob_t, xs, params, key) -> new_params
 
         where `log_prob_t` is the tempered log-density at the current temperature,
         `xs` are the current (resampled) particles, and `params` are current
@@ -261,7 +258,7 @@ def run_smc(
     -------
     SMCOutput
         Dataclass containing the final particle cloud, weights, logZ estimate,
-        and histories of temperatures, ESS, kernel parameters, and MCMC summaries.
+        and histories of temperatures, ESS, kernel parameters, and MCMC stats.
     """
     # Vectorized log-probabilities for convenience.
     log_prob_base_batch = jax.vmap(log_prob_base)
@@ -281,25 +278,21 @@ def run_smc(
     ess_history_init = zero_vec
     logZ_increments_init = zero_vec
 
-    # We need an example summary to allocate a batched history. We run a dummy
-    # 1-step MCMC batch to infer the summary PyTree structure.
+    # Run a dummy MCMC batch to infer stats PyTree structure.
     key_dummy, key_main = jax.random.split(key)
-    dummy_out = kernel.run_mcmc_batch(
+    dummy_out = run_mcmc_batch(
+        step_fn=step_fn,
+        init_state_fn=init_state_fn,
         log_prob=log_prob_base,
         xs_init=xs_init,
         params=kernel_params,
         key=key_dummy,
         n_samples=1,
     )
-    summary_dummy = dummy_out.summary
+    # Average stats across chains to get structure for history
+    stats_dummy = tree_mean_across_batch(dummy_out.stats)
+    mcmc_stats_history_init = tree_make_batched(stats_dummy, n_temp_max)
 
-    if summary_dummy is None:
-        mcmc_summary_history_init = None
-    else:
-        # Average across chains to get a single "per-run" summary instance.
-        summary_dummy = tree_mean_across_batch(summary_dummy)
-        mcmc_summary_history_init = tree_make_batched(summary_dummy, n_temp_max)
-        
     # sanity check for temp_ladder
     if temp_ladder is not None:
         temp_ladder = jnp.asarray(temp_ladder)
@@ -327,7 +320,7 @@ def run_smc(
         ess_history=ess_history_init,
         logZ_increments=logZ_increments_init,
         kernel_params_history=kernel_params_history_init,
-        mcmc_summary_history=mcmc_summary_history_init,
+        mcmc_stats_history=mcmc_stats_history_init,
     )
 
     # Small epsilon to keep temperature strictly positive and avoid division by zero
@@ -348,7 +341,7 @@ def run_smc(
         This uses either:
             - An ESS-based adaptive schedule (if temp_ladder is None), or
             - A deterministic schedule from temp_ladder.
-            
+
         Parameters:
             log_p0: Current log p0(x) for each particle, shape (N,).
             log_p1: Current log p1(x) for each particle, shape (N,).
@@ -406,29 +399,21 @@ def run_smc(
 
         return logprob_t
 
-    def apply_adapt_kernel(
+    def apply_adapt(
         kernel_params: Any,
-        kernel: MarkovKernel,
         log_prob_t: Callable[[Array], Array],
         xs_resampled: Array,
         key_adapt: jax.Array,
     ) -> Any:
         """
         Optionally adapt kernel parameters based on the current tempered target
-        and resampled particles. If adapt_kernel_fn is None, return params unchanged.
+        and resampled particles. If adapt_fn is None, return params unchanged.
         """
-        if adapt_kernel_fn is None:
+        if adapt_fn is None:
             return kernel_params
-        return adapt_kernel_fn(
-            kernel=kernel,
-            log_prob_t=log_prob_t,
-            xs=xs_resampled,
-            params=kernel_params,
-            key=key_adapt,
-        )
+        return adapt_fn(log_prob_t, xs_resampled, kernel_params, key_adapt)
 
     def mutate(
-        kernel: MarkovKernel,
         log_prob_t: Callable[[Array], Array],
         xs_resampled: Array,
         kernel_params: Any,
@@ -440,29 +425,28 @@ def run_smc(
         Returns:
             xs_mutated: final particle positions from the chain, shape (N, D).
             log_pt_mutated: final tempered log-probabilities, shape (N,).
-            mcmc_summary: MCMC summary aggregated across chains, or None if
-                          the kernel does not provide summaries.
+            mcmc_stats: MCMC stats aggregated across chains.
         """
-        out = kernel.run_mcmc_batch(
+        out = run_mcmc_batch(
+            step_fn=step_fn,
+            init_state_fn=init_state_fn,
             log_prob=log_prob_t,
             xs_init=xs_resampled,
             params=kernel_params,
             key=key_mcmc,
             n_samples=n_mcmc_steps,
         )
-        # Assumes state has fields x and log_prob with shape (N, n_steps, ...)
-        xs_traj = out.traj.x
-        logp_traj = out.traj.log_prob
+        # Extract final positions and log-probs from trajectory
+        xs_traj = out.states.x
+        logp_traj = out.states.log_prob
 
         xs_mutated = xs_traj[:, -1, ...]
         log_pt_mutated = logp_traj[:, -1]
 
-        if out.summary is None:
-            mcmc_summary = None
-        else:
-            mcmc_summary = tree_mean_across_batch(out.summary)
+        # Average stats across chains and steps
+        mcmc_stats = tree_mean_across_batch(out.stats)
 
-        return xs_mutated, log_pt_mutated, mcmc_summary
+        return xs_mutated, log_pt_mutated, mcmc_stats
 
     def infer_log_p0_p1(
         xs_mutated: Array,
@@ -514,17 +498,15 @@ def run_smc(
 
         # 3. Build tempered target and adapt kernel.
         logprob_t = make_tempered_log_prob(temp_next)
-        new_kernel_params = apply_adapt_kernel(
+        new_kernel_params = apply_adapt(
             kernel_params=state.kernel_params,
-            kernel=kernel,
             log_prob_t=logprob_t,
             xs_resampled=xs_resampled,
             key_adapt=key_adapt,
         )
 
         # 4. MCMC mutation.
-        xs_mutated, log_pt_mutated, mcmc_summary = mutate(
-            kernel=kernel,
+        xs_mutated, log_pt_mutated, mcmc_stats = mutate(
             log_prob_t=logprob_t,
             xs_resampled=xs_resampled,
             kernel_params=new_kernel_params,
@@ -546,12 +528,9 @@ def run_smc(
             state.kernel_params_history, new_kernel_params, i
         )
 
-        if state.mcmc_summary_history is None or mcmc_summary is None:
-            mcmc_summary_history = state.mcmc_summary_history
-        else:
-            mcmc_summary_history = tree_update_at_index(
-                state.mcmc_summary_history, mcmc_summary, i
-            )
+        mcmc_stats_history = tree_update_at_index(
+            state.mcmc_stats_history, mcmc_stats, i
+        )
 
         # 7. Build new state.
         return state.replace(
@@ -567,23 +546,23 @@ def run_smc(
             ess_history=ess_history,
             logZ_increments=logZ_increments,
             kernel_params_history=kernel_params_history,
-            mcmc_summary_history=mcmc_summary_history,
+            mcmc_stats_history=mcmc_stats_history,
         )
 
     # Run the SMC loop with lax.while_loop for JIT-friendly control flow.
     final_state = jax.lax.while_loop(cond_fn, body_fn, state_init)
-    
+
     # prepare output
     N_temperature = final_state.step
     temperatures = final_state.temperatures
     ess_history = final_state.ess_history
     logZ_incr = final_state.logZ_increments
     kernel_params_history = final_state.kernel_params_history
-    summary_history = final_state.mcmc_summary_history
-    
+    stats_history = final_state.mcmc_stats_history
+
     # Final logZ estimate: sum of increments over used steps plus initial logZ.
     logZ = jnp.sum(logZ_incr) + logZ_init
-    
+
     # prepare the SMC output
     smc_out = SMCOutput(
         N_temperature=N_temperature,
@@ -594,7 +573,7 @@ def run_smc(
         logZ_incr=logZ_incr,
         logZ=logZ,
         kernel_params_history=kernel_params_history,
-        summary=summary_history,
+        stats_history=stats_history,
     )
 
     # truncate histories if requested
@@ -603,4 +582,3 @@ def run_smc(
         smc_out = prettify_smc_output(smc_out)
 
     return smc_out
-2
