@@ -21,17 +21,16 @@ This module implements the distribution in a form compatible with
     - `Banana2D.init_params()`: construct parameter PyTree
     - `Banana2D.log_prob(params, x)`: log-density at a single point x
     - `Banana2D.sample(params, key, n_samples)`: draw samples
-    - `Banana2D.neg_elbo(...)`: convenience wrapper around `generic_neg_elbo`
 """
 
-from typing import Callable, Optional
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from flax import struct
 
-from .distribution import DistributionLike, generic_neg_elbo
+from .distribution import DistributionLike
 
 
 @struct.dataclass
@@ -192,48 +191,6 @@ class Banana2D:
         For this simple distribution, parameters are already interpretable.
         """
         return {"noise_std": params.noise_std}
-
-    def neg_elbo(
-        self,
-        params: Banana2DParams,
-        xs: jnp.ndarray,
-        log_target: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool = True,
-        key: Optional[jax.Array] = None,
-        n_samples: Optional[int] = 0,
-    ) -> jnp.ndarray:
-        """
-        Convenience wrapper around `generic_neg_elbo` for this distribution.
-
-        Parameters
-        ----------
-        params : Banana2DParams
-            Variational parameters of q(x; params).
-        xs : jnp.ndarray
-            Samples from q(x; params), shape (n_samples, dim).
-        log_target : Callable[[jnp.ndarray], jnp.ndarray]
-            Target log-density log p(x).
-        stop_gradient_entropy : bool
-            If True, stop gradients through E_q[log q].
-        key : Optional[jax.Array]
-            Unused; for interface symmetry.
-        n_samples : Optional[int]
-            Unused; for interface symmetry.
-
-        Returns
-        -------
-        jnp.ndarray
-            Scalar negative ELBO estimate.
-        """
-        return generic_neg_elbo(
-            dist=self,
-            params=params,
-            xs=xs,
-            log_target=log_target,
-            stop_gradient_entropy=stop_gradient_entropy,
-            key=key,
-            n_samples=n_samples,
-        )
 
 
 # Hint for static checkers: Banana2D conforms to DistributionLike.

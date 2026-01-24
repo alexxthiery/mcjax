@@ -1,9 +1,9 @@
-from typing import Optional, Callable
+from typing import Optional
 import jax
 import jax.numpy as jnp
 from flax import struct
 from jax import random as jr
-from .distribution import DistributionLike, generic_neg_elbo
+from .distribution import DistributionLike
 
 
 @struct.dataclass
@@ -85,30 +85,6 @@ class Exponential:
         return {
             "rate": jnp.exp(jnp.asarray(params.log_rate))
         }
-
-    def neg_elbo(
-        self,
-        params: ExponentialParams,
-        xs: jnp.ndarray,
-        logtarget: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool = True,
-        key: Optional[jax.Array] = None,
-        n_samples: Optional[int] = None,
-    ) -> jnp.ndarray:
-        if key is not None:
-            raise ValueError("key argument must be None in this method")
-        if n_samples not in (None, 0):
-            raise ValueError("n_samples must be None in this method")
-
-        return generic_neg_elbo(
-            dist=self,
-            params=params,
-            xs=xs,
-            logtarget=logtarget,
-            stop_gradient_entropy=stop_gradient_entropy,
-            key=key,
-            n_samples=n_samples,
-        )
 
 
 # Exponental following DistributionLike protocol

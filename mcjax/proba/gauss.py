@@ -1,4 +1,4 @@
-from typing import Optional, Callable
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -6,7 +6,7 @@ import jax.random as jr
 from flax import struct
 from jax.scipy.linalg import solve_triangular
 
-from .distribution import DistributionLike, generic_neg_elbo
+from .distribution import DistributionLike
 from .mixture import MixtureSameFamily, MixtureSameFamilyParams
 
 
@@ -23,7 +23,7 @@ def _forward(method_name: str):
 
 
 #######################################
-# Diagonal Gaussian variational family
+# Diagonal Gaussian
 #######################################
 @struct.dataclass
 class GaussianDiagParams:
@@ -156,39 +156,13 @@ class GaussianDiag:
             "std": jnp.exp(jnp.asarray(params.log_std)),
         }
 
-    def neg_elbo(
-        self,
-        params: GaussianDiagParams,
-        xs: jnp.ndarray,
-        log_target: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool = True,
-        key: Optional[jax.Array] = None,   # unused, kept for interface symmetry
-        n_samples: Optional[int] = 0,      # unused, kept for interface symmetry
-    ) -> jnp.ndarray:
-        """
-        Negative ELBO:
-
-            E_q[log q(x; params)] - E_q[log p(x)]
-
-        Delegates to `generic_neg_elbo`.
-        """
-        return generic_neg_elbo(
-            dist=self,
-            params=params,
-            xs=xs,
-            log_target=log_target,
-            stop_gradient_entropy=stop_gradient_entropy,
-            key=key,
-            n_samples=n_samples,
-        )
-
 
 # For static protocol checking only; not used at runtime.
 _dist_gauss_diag: DistributionLike = GaussianDiag.create(dim=1)
 
 
 ################################################
-# Full-covariance Gaussian variational family
+# Full-covariance Gaussian
 ################################################
 @struct.dataclass
 class GaussianFullCovParams:
@@ -201,9 +175,9 @@ class GaussianFullCovParams:
 @struct.dataclass
 class GaussianFullCov:
     """
-    Full-covariance Gaussian variational family:
+    Full-covariance Gaussian distribution:
 
-        q(x) = N(mu, Σ), with Σ = L @ L.T
+        q(x) = N(mu, Sigma), with Sigma = L @ L.T
 
     where:
         L = diag(exp(log_diag)) + tril(cov_chol_lower, k=-1).
@@ -369,7 +343,7 @@ class GaussianFullCov:
             Dictionary with keys:
                 - "mu":       mean(s), shape (D,) or (K, D)
                 - "cov_chol": Cholesky factor(s) L, shape (D, D) or (K, D, D)
-                - "cov":      covariance(s) Σ = L @ L.T, shape (D, D) or (K, D, D)
+                - "cov":      covariance(s) Sigma = L @ L.T, shape (D, D) or (K, D, D)
         """
         mu = params.mu
         L = self._construct_cholesky(params)        # (D, D) or (K, D, D)
@@ -379,32 +353,6 @@ class GaussianFullCov:
             "cov_chol": L,
             "cov": cov,
         }
-
-    def neg_elbo(
-        self,
-        params: GaussianFullCovParams,
-        xs: jnp.ndarray,
-        log_target: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool = True,
-        key: Optional[jax.Array] = None,   # unused, kept for interface symmetry
-        n_samples: Optional[int] = 0,      # unused, kept for interface symmetry
-    ) -> jnp.ndarray:
-        """
-        Negative ELBO:
-
-            E_q[log q(x; params)] - E_q[log p(x)]
-
-        Delegates to `generic_neg_elbo`.
-        """
-        return generic_neg_elbo(
-            dist=self,
-            params=params,
-            xs=xs,
-            log_target=log_target,
-            stop_gradient_entropy=stop_gradient_entropy,
-            key=key,
-            n_samples=n_samples,
-        )
 
 
 # For static protocol checking only; not used at runtime.
@@ -433,7 +381,6 @@ class GaussianDiagMixture:
     log_prob_batch = _forward("log_prob_batch")
     log_normalization = _forward("log_normalization")
     postprocess = _forward("postprocess")
-    neg_elbo = _forward("neg_elbo")
 
     @classmethod
     def create(
@@ -547,7 +494,6 @@ class GaussianFullMixture:
     log_prob_batch = _forward("log_prob_batch")
     log_normalization = _forward("log_normalization")
     postprocess = _forward("postprocess")
-    neg_elbo = _forward("neg_elbo")
 
     @classmethod
     def create(

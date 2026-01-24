@@ -4,12 +4,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax.scipy.special import gammaln
 from jax.scipy.linalg import solve_triangular
-from typing import Optional, Callable
-from .distribution import DistributionLike, generic_neg_elbo
+from typing import Optional
+from .distribution import DistributionLike
 
 
 #########################################
-# Diagonal Student-t variational family
+# Diagonal Student-t
 #########################################
 @struct.dataclass
 class StudentDiagParams:
@@ -86,32 +86,13 @@ class StudentDiag:
             "df": params.df,
         }
 
-    def neg_elbo(
-        self,
-        params: StudentDiagParams,
-        xs: jnp.ndarray,
-        logtarget: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool = True,
-        key: Optional[jax.Array] = None,
-        n_samples: Optional[int] = None,
-    ) -> jnp.ndarray:
-        return generic_neg_elbo(
-            dist=self,
-            params=params,
-            xs=xs,
-            logtarget=logtarget,
-            stop_gradient_entropy=stop_gradient_entropy,
-            key=key,
-            n_samples=n_samples,
-        )
-
 
 # StudentDiag follows the DistributionLike protocol
 dist: DistributionLike = StudentDiag.create(dim=1)
 
 
 ###############################################
-# Full-covariance Student-t variational family
+# Full-covariance Student-t
 ###############################################
 @struct.dataclass
 class StudentFullCovParams:
@@ -210,25 +191,6 @@ class StudentFullCov:
             "cov": cov,
             "df": params.df,
         }
-
-    def neg_elbo(
-        self,
-        params: StudentFullCovParams,
-        xs: jnp.ndarray,
-        logtarget: Callable[[jnp.ndarray], jnp.ndarray],
-        stop_gradient_entropy: bool = True,
-        key: Optional[jax.Array] = None,
-        n_samples: Optional[int] = None,
-    ) -> jnp.ndarray:
-        return generic_neg_elbo(
-            dist=self,
-            params=params,
-            xs=xs,
-            logtarget=logtarget,
-            stop_gradient_entropy=stop_gradient_entropy,
-            key=key,
-            n_samples=n_samples,
-        )
 
 
 # StudentFullCov follows the DistributionLike protocol
